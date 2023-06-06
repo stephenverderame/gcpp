@@ -1,0 +1,3 @@
+add_library(gcpp SHARED gc_scan.cpp)
+target_include_directories(gcpp PUBLIC "${PROJECT_SOURCE_DIR}/include")
+target_compile_options(gcpp PRIVATE ${COMPILE_FLAGS})
