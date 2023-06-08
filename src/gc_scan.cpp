@@ -9,8 +9,17 @@
 
 namespace
 {
+/**
+ * @brief Scans the memory between `begin` and `end` looking for GC pointers
+ * Requires `begin` and `end` denote a readable area of memory
+ *
+ * @tparam Func callable object which takes an address containing a GC pointer
+ * @param begin
+ * @param p_end
+ * @param f
+ */
 template <typename Func>
-inline void scan_memory(ptr_size_t begin, ptr_size_t p_end, Func f)
+inline void scan_memory(ptr_size_t begin, ptr_size_t p_end, Func f) noexcept
 {
     for (auto ptr = begin & gc_ptr_alignment_mask; ptr < p_end;
          ptr += gc_ptr_alignment) {
@@ -20,8 +29,10 @@ inline void scan_memory(ptr_size_t begin, ptr_size_t p_end, Func f)
     }
 }
 
+/** Get's the path to the process executable */
 auto get_proc_name()
 {
+    // null-terminator separated list of arguments
     std::ifstream proc("/proc/self/cmdline");
     std::string proc_name;
     proc >> proc_name;
@@ -32,16 +43,22 @@ auto get_proc_name()
 }
 }  // namespace
 
-gcpp::GCRoots::GCRoots() : m_global_roots(), m_local_roots()
+gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
 {
+    // scans the "data segment" for all possible global GC ptrs
     const auto proc_name = get_proc_name();
+    // contains lines of the form:
+    // <start_addr>-<end_addr> <access> <other_stuff>           <process_name>
     std::ifstream proc("/proc/self/maps");
     std::string line;
     while (std::getline(proc, line)) {
         if (line.find(proc_name) != std::string::npos) {
+            // section is not a library the executable is linked with or
+            // non-data segment
             const auto access = line.substr(line.find(' ') + 1, 4);
             if (access.find('r') != std::string::npos &&
                 access.find('x') == std::string::npos) {
+                // section is readable and not executable
                 const auto addr_midpt = line.find('-');
                 const auto addr_start = line.substr(0, addr_midpt);
 
@@ -65,15 +82,22 @@ gcpp::GCRoots& gcpp::GCRoots::get_instance()
     return *g_instance;
 }
 
-std::vector<ptr_size_t> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
+/**
+ * @brief Ensures all elements on the heap are still valid GC ptrs considering
+ * the current stack pointer.
+ *
+ * @param heap_begin start of the min heap of addresses of GC ptrs on the stack
+ * @param heap_end end of the min heap
+ * @param stack_ptr rsp
+ * @return the new end of the min heap, which will be less than or equal to
+ * `heap_end`
+ */
+auto recheck_locals(std::vector<ptr_size_t>::iterator heap_begin,
+                    std::vector<ptr_size_t>::iterator heap_end,
+                    ptr_size_t stack_ptr)
 {
-    ptr_size_t stack_ptr = 0;
-    // move rsp into stack_ptr, AT&T syntax
-    asm("mov %%rsp, %0 \n" : "=r"(stack_ptr));
-    auto heap_begin = m_local_roots.begin();
-    auto heap_end = m_local_roots.end();
     // remove anything with an address less than the stack pointer
-    while (!m_local_roots.empty() && *heap_begin < stack_ptr - red_zone_size) {
+    while (heap_begin != heap_end && *heap_begin < stack_ptr - red_zone_size) {
         std::pop_heap(heap_begin, heap_end, std::greater<>());
         --heap_end;
     }
@@ -88,13 +112,27 @@ std::vector<ptr_size_t> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
     heap_end = std::remove_if(
         heap_begin, heap_end,
         [&to_remove](const auto& val) { return to_remove.contains(val); });
+    // sanity check postcondition
     if (heap_end < heap_begin) {
         throw std::runtime_error("heap_end < heap_begin");
     }
+    return heap_end;
+}
+
+std::vector<ptr_size_t> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
+{
+    ptr_size_t stack_ptr = 0;
+    // move rsp into stack_ptr, AT&T syntax
+    asm("mov %%rsp, %0 \n" : "=r"(stack_ptr));
+    const auto heap_begin = m_local_roots.begin();
+    auto heap_end = m_local_roots.end();
+    heap_end = recheck_locals(heap_begin, heap_end, stack_ptr);
+
+    // noexcept bc we are reducing size
     m_local_roots.resize(
         static_cast<size_t>(std::distance(heap_begin, heap_end)));
 
-    // add new locals
+    // add new locals, noexcept
     scan_memory(stack_ptr - red_zone_size, base_ptr, [this](auto ptr) {
         m_local_roots.push_back(reinterpret_cast<ptr_size_t>(ptr));
         std::push_heap(m_local_roots.begin(), m_local_roots.end(),
