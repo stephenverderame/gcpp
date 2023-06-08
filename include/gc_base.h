@@ -39,6 +39,7 @@ constexpr auto ptr_header()
 
 /** MSB of a GC pointer to indicate it's a pointer */
 constexpr auto ptr_tag = static_cast<ptr_size_t>(0x9F) << (ptr_size - 1) * 8;
+/** Mask to AND a ptr of a GC pointer to remove the tag */
 constexpr auto ptr_mask =
     (static_cast<ptr_size_t>(1) << (ptr_size - 1) * 8) - 1;
 
@@ -61,3 +62,10 @@ struct FatPtr {
 
 /** Size of a GC pointer */
 constexpr auto gc_ptr_size = sizeof(FatPtr);
+/** Alignment of the GC pointer */
+constexpr auto gc_ptr_alignment = std::alignment_of_v<FatPtr>;
+/** Mask to AND a value with to get it onto a `gc_ptr_alignment` byte boundary
+ */
+constexpr auto gc_ptr_alignment_mask = ~(gc_ptr_alignment - 1);
+/** Size of the redzone */
+constexpr auto red_zone_size = 128;
