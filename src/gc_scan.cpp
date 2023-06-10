@@ -67,7 +67,7 @@ gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
                 const auto data_start = std::stoull(addr_start, nullptr, 16);
                 const auto data_end = std::stoull(addr_end, nullptr, 16);
                 scan_memory(data_start, data_end, [this](auto val) {
-                    m_global_roots.push_back(*(val + 1) & ptr_mask);
+                    m_global_roots.push_back(reinterpret_cast<ptr_size_t>(val));
                 });
             }
         }
@@ -119,7 +119,7 @@ auto recheck_locals(std::vector<ptr_size_t>::iterator heap_begin,
     return heap_end;
 }
 
-std::vector<ptr_size_t> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
+std::vector<FatPtr*> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
 {
     ptr_size_t stack_ptr = 0;
     // move rsp into stack_ptr, AT&T syntax
@@ -138,9 +138,13 @@ std::vector<ptr_size_t> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
         std::push_heap(m_local_roots.begin(), m_local_roots.end(),
                        std::greater<>());
     });
-    auto res = m_global_roots;
-    for (auto ptr : m_local_roots) {
-        res.push_back(*(reinterpret_cast<ptr_size_t*>(ptr) + 1) & ptr_mask);
+    auto res = std::vector<FatPtr*>();
+    res.reserve(m_global_roots.size() + m_local_roots.size());
+    for (auto val : m_global_roots) {
+        res.push_back(reinterpret_cast<FatPtr*>(val));
+    }
+    for (auto val : m_local_roots) {
+        res.push_back(reinterpret_cast<FatPtr*>(val));
     }
     return res;
 }

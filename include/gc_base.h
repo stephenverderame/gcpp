@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <type_traits>
 
 using ptr_t = void*;
@@ -55,10 +56,40 @@ auto maybe_ptr(const ptr_size_t* ptr)
     return *ptr == ptr_header() && (*(ptr + 1) & ptr_tag) == ptr_tag;
 }
 
+/**
+ * @brief The underlying pointer type used by the GC
+ *
+ */
 struct FatPtr {
     ptr_size_t header = ptr_header();
     ptr_size_t ptr = ptr_tag;
+
+    /**
+     * @brief Construct a new Fat Ptr object
+     *
+     * @param ptr the GC ptr this FatPtr should point to. `ptr` need not contain
+     * the tag and should not have any bits set in the most significant byte
+     */
+    explicit FatPtr(ptr_size_t ptr) : ptr(ptr_tag | (ptr & ptr_mask)) {}
+
+    /**
+     * @brief Get the gc ptr (without the tag)
+     */
+    inline auto get_gc_ptr() const { return ptr & ptr_mask; }
+
+    auto operator<=>(const FatPtr& other) const { return ptr <=> other.ptr; }
 };
+
+namespace std
+{
+template <>
+struct std::hash<FatPtr> {
+    auto operator()(const FatPtr& ptr) const noexcept
+    {
+        return std::hash<ptr_size_t>{}(ptr.ptr);
+    }
+};
+}  // namespace std
 
 /** Size of a GC pointer */
 constexpr auto gc_ptr_size = sizeof(FatPtr);
