@@ -15,14 +15,14 @@ const auto not_ptr = 0x1000;
 auto not_ptr_2 = 0x2000;
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define GC_GET_ROOT_VALS(out_vec)                                     \
-    {                                                                 \
-        std::vector<FatPtr*> root_addrs;                              \
-        GC_GET_ROOTS(root_addrs);                                     \
-        (out_vec).resize(root_addrs.size());                          \
-        std::transform(root_addrs.begin(), root_addrs.end(),          \
-                       (out_vec).begin(),                             \
-                       [](auto ptr) { return ptr->ptr & ptr_mask; }); \
+#define GC_GET_ROOT_VALS(out_vec)                                       \
+    {                                                                   \
+        std::vector<FatPtr*> root_addrs;                                \
+        GC_GET_ROOTS(root_addrs);                                       \
+        (out_vec).resize(root_addrs.size());                            \
+        std::transform(root_addrs.begin(), root_addrs.end(),            \
+                       (out_vec).begin(),                               \
+                       [](auto ptr) { return ptr->get_gc_ptr().ptr; }); \
     }
 
 TEST(ScanTest, GlobalTest)

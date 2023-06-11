@@ -1,5 +1,7 @@
 #pragma once
 #include <concepts>
+#include <cstddef>
+#include <new>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -13,9 +15,10 @@ concept Collector = requires(T t) {
      * @brief Allocates a new object on the heap
      *
      * @param size size of the object to allocate
+     * @param alignment alignment of the object to allocate
      */
     {
-        t.alloc(std::declval<std::size_t>())
+        t.alloc(std::declval<std::size_t>(), std::declval<std::align_val_t>())
     } -> std::same_as<FatPtr>;
 
     /**
@@ -98,5 +101,50 @@ concept CollectorLockingPolicy = requires(T t) {
     {
         t.notify_collect(std::declval<const FatPtr&>())
     } noexcept -> std::same_as<void>;
+};
+/**
+ * @brief Metadata of an object managed by the GC
+ */
+struct MetaData {
+    size_t size;
+    std::align_val_t alignment;
+};
+
+/**
+ * @brief Heap allocator that aligns all allocations to a given alignment
+ * 
+ * @tparam T type of element in the heap
+ * @tparam Alignment alignment of the heap
+ */
+template <typename T,
+          std::align_val_t Alignment =
+              static_cast<std::align_val_t>(alignof(std::max_align_t))>
+struct AlignedAllocator {
+    using value_type = T;
+    using size_type = std::size_t;
+    using difference_type = std::ptrdiff_t;
+    using is_always_equal = std::true_type;
+
+    template <typename U>
+    struct rebind {
+        using other = AlignedAllocator<U, Alignment>;
+    };
+
+    template<typename U>
+    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+    AlignedAllocator() noexcept = default;
+
+    [[nodiscard]] T* allocate(std::size_t n)
+    {
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+        return new(Alignment) T[n];
+    }
+
+    void deallocate(T* p, std::size_t) noexcept
+    {
+        // NOLINTNEXTLINE(cppcoreguidelines-*)
+        delete[] p;
+    }
 };
 }  // namespace gcpp

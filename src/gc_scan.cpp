@@ -1,6 +1,7 @@
 #include "gc_scan.h"
 
 #include <algorithm>
+#include <concepts>
 #include <fstream>
 #include <type_traits>
 #include <unordered_set>
@@ -9,25 +10,6 @@
 
 namespace
 {
-/**
- * @brief Scans the memory between `begin` and `end` looking for GC pointers
- * Requires `begin` and `end` denote a readable area of memory
- *
- * @tparam Func callable object which takes an address containing a GC pointer
- * @param begin
- * @param p_end
- * @param f
- */
-template <typename Func>
-inline void scan_memory(ptr_size_t begin, ptr_size_t p_end, Func f) noexcept
-{
-    for (auto ptr = begin & gc_ptr_alignment_mask; ptr < p_end;
-         ptr += gc_ptr_alignment) {
-        if (maybe_ptr(reinterpret_cast<ptr_size_t*>(ptr))) {
-            f(reinterpret_cast<ptr_size_t*>(ptr));
-        }
-    }
-}
 
 /** Get's the path to the process executable */
 auto get_proc_name()
@@ -133,7 +115,8 @@ std::vector<FatPtr*> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
         static_cast<size_t>(std::distance(heap_begin, heap_end)));
 
     // add new locals, noexcept
-    scan_memory(stack_ptr - red_zone_size, base_ptr, [this](auto ptr) {
+    // + 1 bc base_ptr is inclusive
+    scan_memory(stack_ptr - red_zone_size, base_ptr + 1, [this](auto ptr) {
         m_local_roots.push_back(reinterpret_cast<ptr_size_t>(ptr));
         std::push_heap(m_local_roots.begin(), m_local_roots.end(),
                        std::greater<>());

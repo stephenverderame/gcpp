@@ -20,7 +20,7 @@ class GCRoots
     /** Pointer to stack location of all local roots */
     std::vector<ptr_size_t> m_local_roots;
     // NOLINTNEXTLINE(cppcoreguidelines-*)
-    inline static std::unique_ptr<GCRoots> g_instance;
+    inline static thread_local std::unique_ptr<GCRoots> g_instance;
     GCRoots() noexcept;
 
   public:

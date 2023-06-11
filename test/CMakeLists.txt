@@ -19,4 +19,6 @@ function (make_test NAME)
 	add_test (NAME ${NAME} COMMAND ${NAME} WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/test")
 endfunction()
 
-make_test (basic_test SOURCES basic_test.cpp)
+make_test (scan_test SOURCES scan_test.cpp)
+
+make_test (copy_test SOURCES copy_test.cpp)

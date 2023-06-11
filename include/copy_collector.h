@@ -1,5 +1,9 @@
 #pragma once
 #include <array>
+#include <new>
+#include <ranges>
+#include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #include "collector.h"
@@ -9,15 +13,17 @@ namespace gcpp
 {
 class CopyingCollector
 {
+    using MemStore = std::vector<std::byte, AlignedAllocator<std::byte>>;
+
   private:
     /** The two spaces of the heap */
-    std::array<std::vector<std::byte>, 2> m_spaces;
+    std::array<MemStore, 2> m_spaces;
     /** Next index to allocate an object */
     size_t m_next = 0;
     /** Next index of object to move onto the to space */
-    size_t m_scan = 0;
+    // size_t m_scan = 0;
     /** Index of the space in which we allocate new objects */
-    unsigned char m_space_idx = 0;
+    uint8_t m_space_num = 0;
     std::optional<uint8_t> m_promotion_threshold;
 
   public:
@@ -27,16 +33,26 @@ class CopyingCollector
      * @{
      */
     CopyingCollector(size_t size, std::optional<uint8_t> promotion_threshold)
-        : m_spaces(
-              {std::vector<std::byte>(size), std::vector<std::byte>(size)}),
+        : m_spaces({MemStore(size >> 1), MemStore(size >> 1)}),
           m_promotion_threshold(promotion_threshold)
     {
+        if (size >= ptr_mask) {
+            throw std::runtime_error("Heap size too large");
+        }
     }
 
-    [[nodiscard]] FatPtr alloc(size_t size);
-    std::vector<FatPtr> collect(std::vector<FatPtr>& roots) noexcept;
+    [[nodiscard]] FatPtr alloc(size_t size,
+                               std::align_val_t alignment = std::align_val_t{
+                                   1});
+
+    template <std::ranges::range T>
+    requires std::same_as<std::ranges::range_reference_t<T>, FatPtr&>
+    std::vector<FatPtr> collect(T&& roots) noexcept;
+
     [[nodiscard]] bool contains(void* ptr) const noexcept;
+
     void* access(const FatPtr& ptr) noexcept;
+
     [[nodiscard]] size_t free_space() const noexcept;
     /** @} */
 
@@ -48,6 +64,24 @@ class CopyingCollector
      * @return FatPtr pointer to the copy of the object
      */
     [[nodiscard]] FatPtr copy(const FatPtr& ptr) noexcept;
+
+    /**
+     * @brief Forwards a pointer to the other space
+     * Forwards the pointer and all members via depth-first traversal
+     *
+     * @param ptr pointer to forward
+     * @param visited set of pointers that have already been forwarded (black
+     * nodes in the graph)
+     */
+    void forward_ptr(FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited);
+
+    /**
+     * @brief Gets the data pointer for `ptr` and the metadata for the object
+     *
+     * @param ptr
+     * @return std::tuple<MetaData, void*> tuple of metadata and data pointer
+     */
+    std::tuple<MetaData, void*> access_with_data(const FatPtr& ptr) noexcept;
 };
 
 static_assert(Collector<CopyingCollector>);
