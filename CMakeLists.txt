@@ -39,5 +39,11 @@ set(COMPILE_FLAGS
     "-Wconversion"
     "-Wnarrowing")
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message("Debug build")
+    list(APPEND COMPILE_FLAGS "-O0")
+    list(APPEND COMPILE_FLAGS "-gdwarf-5")
+endif ()
+
 add_subdirectory ("src")
 add_subdirectory ("test")

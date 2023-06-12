@@ -9,6 +9,7 @@
 #include "gc_base.h"
 namespace gcpp
 {
+/** Static interface for a garbage collector */
 template <typename T>
 concept Collector = requires(T t) {
     /**
@@ -112,7 +113,7 @@ struct MetaData {
 
 /**
  * @brief Heap allocator that aligns all allocations to a given alignment
- * 
+ *
  * @tparam T type of element in the heap
  * @tparam Alignment alignment of the heap
  */
@@ -126,19 +127,23 @@ struct AlignedAllocator {
     using is_always_equal = std::true_type;
 
     template <typename U>
+    // NOLINTNEXTLINE(readability-identifier-naming)
     struct rebind {
         using other = AlignedAllocator<U, Alignment>;
     };
 
-    template<typename U>
-    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+    template <typename U>
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept
+    {
+    }
 
     AlignedAllocator() noexcept = default;
 
     [[nodiscard]] T* allocate(std::size_t n)
     {
         // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-        return new(Alignment) T[n];
+        return new (Alignment) T[n];
     }
 
     void deallocate(T* p, std::size_t) noexcept

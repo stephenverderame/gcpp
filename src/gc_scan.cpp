@@ -49,7 +49,7 @@ gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
                 const auto data_start = std::stoull(addr_start, nullptr, 16);
                 const auto data_end = std::stoull(addr_end, nullptr, 16);
                 scan_memory(data_start, data_end, [this](auto val) {
-                    m_global_roots.push_back(reinterpret_cast<ptr_size_t>(val));
+                    m_global_roots.push_back(reinterpret_cast<uintptr_t>(val));
                 });
             }
         }
@@ -74,9 +74,9 @@ gcpp::GCRoots& gcpp::GCRoots::get_instance()
  * @return the new end of the min heap, which will be less than or equal to
  * `heap_end`
  */
-auto recheck_locals(std::vector<ptr_size_t>::iterator heap_begin,
-                    std::vector<ptr_size_t>::iterator heap_end,
-                    ptr_size_t stack_ptr)
+auto recheck_locals(std::vector<uintptr_t>::iterator heap_begin,
+                    std::vector<uintptr_t>::iterator heap_end,
+                    uintptr_t stack_ptr)
 {
     // remove anything with an address less than the stack pointer
     while (heap_begin != heap_end && *heap_begin < stack_ptr - red_zone_size) {
@@ -84,9 +84,9 @@ auto recheck_locals(std::vector<ptr_size_t>::iterator heap_begin,
         --heap_end;
     }
     // check remaining locals still contain the GC ptr metadata
-    std::unordered_set<ptr_size_t> to_remove;
+    std::unordered_set<uintptr_t> to_remove;
     for (auto it = heap_begin; it != heap_end; ++it) {
-        if (!maybe_ptr(reinterpret_cast<const ptr_size_t*>(*it))) {
+        if (!FatPtr::maybe_ptr(reinterpret_cast<const uintptr_t*>(*it))) {
             to_remove.insert(*it);
         }
     }
@@ -101,9 +101,9 @@ auto recheck_locals(std::vector<ptr_size_t>::iterator heap_begin,
     return heap_end;
 }
 
-std::vector<FatPtr*> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
+std::vector<FatPtr*> gcpp::GCRoots::get_roots(uintptr_t base_ptr)
 {
-    ptr_size_t stack_ptr = 0;
+    uintptr_t stack_ptr = 0;
     // move rsp into stack_ptr, AT&T syntax
     asm("mov %%rsp, %0 \n" : "=r"(stack_ptr));
     const auto heap_begin = m_local_roots.begin();
@@ -117,7 +117,7 @@ std::vector<FatPtr*> gcpp::GCRoots::get_roots(ptr_size_t base_ptr)
     // add new locals, noexcept
     // + 1 bc base_ptr is inclusive
     scan_memory(stack_ptr - red_zone_size, base_ptr + 1, [this](auto ptr) {
-        m_local_roots.push_back(reinterpret_cast<ptr_size_t>(ptr));
+        m_local_roots.push_back(reinterpret_cast<uintptr_t>(ptr));
         std::push_heap(m_local_roots.begin(), m_local_roots.end(),
                        std::greater<>());
     });

@@ -16,9 +16,9 @@ class GCRoots
 {
   private:
     /** Pointer to addresses of global roots */
-    std::vector<ptr_size_t> m_global_roots;
+    std::vector<uintptr_t> m_global_roots;
     /** Pointer to stack location of all local roots */
-    std::vector<ptr_size_t> m_local_roots;
+    std::vector<uintptr_t> m_local_roots;
     // NOLINTNEXTLINE(cppcoreguidelines-*)
     inline static thread_local std::unique_ptr<GCRoots> g_instance;
     GCRoots() noexcept;
@@ -33,7 +33,7 @@ class GCRoots
      * @param base_ptr rbp of current function
      * @return std::vector<ptr_t>
      */
-    std::vector<FatPtr*> get_roots(ptr_size_t base_ptr);
+    std::vector<FatPtr*> get_roots(uintptr_t base_ptr);
 };
 
 /**
@@ -45,7 +45,7 @@ class GCRoots
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define GC_GET_ROOTS(out_vec)                                          \
     {                                                                  \
-        ptr_size_t base_ptr;                                           \
+        uintptr_t base_ptr;                                            \
         /* move rbp into `base_ptr`, AT&T syntax */                    \
         asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                      \
         (out_vec) = gcpp::GCRoots::get_instance().get_roots(base_ptr); \

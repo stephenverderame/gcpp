@@ -27,7 +27,7 @@ auto not_ptr_2 = 0x2000;
 
 TEST(ScanTest, GlobalTest)
 {
-    std::vector<ptr_size_t> roots;
+    std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, UnorderedElementsAre(0x1000, 0x2000));
     // avoid unused variable warning
@@ -41,7 +41,7 @@ TEST(ScanTest, LocalsTest)
     auto not_ptr2 = 0xDEADBEEF;
     auto ptr = FatPtr{0x5000};
     const auto ptr2 = FatPtr{0x6000};
-    std::vector<ptr_size_t> roots;
+    std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, UnorderedElementsAre(0x1000, 0x2000, 0x5000, 0x6000));
     (void)not_ptr2;
@@ -53,7 +53,7 @@ __attribute__((noinline)) void foo()
 {
     auto ptr = FatPtr{0x7000};
     const auto ptr2 = FatPtr{0x8000};
-    std::vector<ptr_size_t> roots;
+    std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, UnorderedElementsAre(0x1000, 0x2000, 0x7000, 0x8000));
     (void)ptr;
@@ -64,7 +64,7 @@ __attribute__((noinline)) void bar()
 {
     auto ptr = FatPtr{0x700};
     const auto ptr2 = FatPtr{0x800};
-    std::vector<ptr_size_t> roots;
+    std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf({0x1000, 0x2000, 0x700, 0x800}));
     (void)ptr;
@@ -75,23 +75,23 @@ TEST(ScanTest, NestedLocals)
 {
     foo();
     bar();
-    std::vector<ptr_size_t> roots;
+    std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf({0x1000, 0x2000}));
 }
 
-void rec_left(ptr_size_t i, ptr_size_t max_size)
+void rec_left(uintptr_t i, uintptr_t max_size)
 {
     if (i == max_size) {
         return;
     }
     auto ptr = FatPtr{(i * 0x10000)};
-    std::vector<ptr_size_t> roots;
-    std::vector<ptr_size_t> expected_roots;
+    std::vector<uintptr_t> roots;
+    std::vector<uintptr_t> expected_roots;
     GC_GET_ROOT_VALS(roots);
     expected_roots.push_back(0x1000);
     expected_roots.push_back(0x2000);
-    for (ptr_size_t j = 1; j <= i; ++j) {
+    for (uintptr_t j = 1; j <= i; ++j) {
         expected_roots.push_back(j * 0x10000);
     }
     ASSERT_THAT(roots, IsSupersetOf(expected_roots));
@@ -102,15 +102,15 @@ void rec_left(ptr_size_t i, ptr_size_t max_size)
 
 TEST(ScanTest, LeftRecursiveTest) { rec_left(1, 101); }
 
-void rec_right(ptr_size_t i, ptr_size_t max_size)
+void rec_right(uintptr_t i, uintptr_t max_size)
 {
     if (i == max_size) {
         return;
     }
     auto ptr = FatPtr{(i * 0x100000)};
-    std::vector<ptr_size_t> roots;
-    const std::array<ptr_size_t, 3> expected_roots = {0x1000, 0x2000,
-                                                      i * 0x100000};
+    std::vector<uintptr_t> roots;
+    const std::array<uintptr_t, 3> expected_roots = {0x1000, 0x2000,
+                                                     i * 0x100000};
     rec_right(i + 1, max_size);
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf(expected_roots));

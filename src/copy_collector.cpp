@@ -17,55 +17,17 @@
 namespace
 {
 
-inline ptr_size_t get_heap_idx(const FatPtr& ptr) noexcept
+inline uintptr_t get_heap_idx(const FatPtr& ptr) noexcept
 {
     return (ptr.get_gc_ptr().ptr >> 1) - 8;
 }
-/**
- * @brief Get the size of an object in the heap using the dynamic size format
- *
- * @param space current heap
- * @param ptr pointer to the object
- * @return tuple containing the size of the object and the index of the first
- * byte of the object in the heap
- */
-template <class Alloc>
-inline auto get_data_and_idx(const std::vector<std::byte, Alloc>& space,
-                             const FatPtr& ptr)
-{
-    size_t size = 0;
-    size_t shift = 0;
-    auto idx = get_heap_idx(ptr);
-    do {
-        size |= (static_cast<size_t>(space[idx]) & 127) << shift;
-        shift += 7;
-    } while ((static_cast<uint8_t>(space[idx++]) & 128) != 0);
-    // skip padding
-    uint8_t padding_bytes = 1;
-    while (space[idx] != static_cast<std::byte>(0)) {
-        ++padding_bytes;
-        ++idx;
-    }
-    return std::make_tuple(
-        gcpp::MetaData{
-            .size = size,
-            .alignment = static_cast<std::align_val_t>(padding_bytes)},
-        idx + 1);
-}
+
 }  // namespace
 
 /** Gets the space number that `ptr` belongs to */
 inline uint8_t get_space_num(const FatPtr& ptr) noexcept
 {
     return ptr.get_gc_ptr().ptr & 1;
-}
-
-std::tuple<gcpp::MetaData, void*> gcpp::CopyingCollector::access_with_data(
-    const FatPtr& ptr) noexcept
-{
-    auto& space = m_spaces[get_space_num(ptr)];
-    auto [data, idx] = get_data_and_idx(space, ptr);
-    return std::make_tuple(data, &space[idx]);
 }
 
 size_t gcpp::CopyingCollector::free_space() const noexcept
@@ -85,17 +47,8 @@ void* gcpp::CopyingCollector::access(const FatPtr& ptr) noexcept
 {
     auto& space = m_spaces[get_space_num(ptr)];
     // strip space idx bit
-    ptr_size_t idx = get_heap_idx(ptr);
-    while ((static_cast<uint8_t>(space[idx]) & 0b10000000) != 0) {
-        ++idx;
-    }
-    // idx now points to last byte of size
-    ++idx;
-    while (space[idx] != static_cast<std::byte>(0)) {
-        ++idx;
-    }
-    // idx now points to last byte of padding
-    return &space[idx + 1];
+    uintptr_t idx = get_heap_idx(ptr);
+    return &space[idx];
 }
 /**
  * @brief Determines the number of bytes of padding required to align the
@@ -107,30 +60,12 @@ void* gcpp::CopyingCollector::access(const FatPtr& ptr) noexcept
 uint8_t calc_alignment_bytes(const std::byte* cur_ptr,
                              std::align_val_t alignment)
 {
-    uint8_t alignment_bytes = 1;
+    uint8_t alignment_bytes = 0;
     while ((reinterpret_cast<size_t>(cur_ptr + alignment_bytes) &
             (static_cast<size_t>(alignment) - 1)) != 0) {
         ++alignment_bytes;
     }
     return alignment_bytes;
-}
-
-/**
- * @brief Set the metadata of an object in the heap (size and padding)
- *
- * @param space_ptr
- * @param size_buf
- * @param size_bytes
- * @param alignment_bytes
- */
-void set_metadata(std::byte* space_ptr, const std::array<uint8_t, 10>& size_buf,
-                  uint8_t size_bytes, uint8_t alignment_bytes)
-{
-    memcpy(space_ptr, size_buf.data(), size_bytes);
-    if (alignment_bytes > 1) {
-        memset(space_ptr + size_bytes, 1, alignment_bytes - 1);
-    }
-    space_ptr[size_bytes + alignment_bytes - 1] = static_cast<std::byte>(0);
 }
 
 /*  Dynamic Size Format
@@ -159,25 +94,16 @@ FatPtr gcpp::CopyingCollector::alloc(const size_t size,
     if (size == 0) {
         throw std::bad_alloc();
     }
-    std::array<uint8_t, 10> size_buf;
-    uint8_t size_bytes = 1;
-    auto size_left = size;
-    do {
-        size_buf[size_bytes - 1] = size_left & 127;
-        size_left >>= 7;
-    } while (size_left > 0 && (size_buf[size_bytes++ - 1] |= 128) != 0);
+    const auto alignment_bytes =
+        calc_alignment_bytes(&m_spaces[m_space_num][m_next], alignment);
 
-    const auto alignment_bytes = calc_alignment_bytes(
-        &m_spaces[m_space_num][m_next + size_bytes], alignment);
-
-    if (size + size_bytes + alignment_bytes > free_space()) {
+    if (size + alignment_bytes > free_space()) {
         throw std::bad_alloc();
     }
-    auto ptr = FatPtr((m_next + 8) << 1 | m_space_num);
+    auto ptr = FatPtr((m_next + alignment_bytes + 8) << 1 | m_space_num);
     // store size + padding in heap
-    set_metadata(&m_spaces[m_space_num][m_next], size_buf, size_bytes,
-                 alignment_bytes);
-    m_next += size + size_bytes + alignment_bytes;
+    m_metadata.emplace(ptr, MetaData{.size = size, .alignment = alignment});
+    m_next += size + alignment_bytes;
     return ptr;
 }
 
@@ -187,31 +113,36 @@ FatPtr gcpp::CopyingCollector::copy(const FatPtr& ptr) noexcept
         // root is in to_space
         return ptr;
     }
-    auto [old_data, old_obj_data] = access_with_data(ptr);
+    const auto old_data = m_metadata.at(ptr);
+    auto old_obj_data = access(ptr);
     auto new_obj = alloc(old_data.size, old_data.alignment);
     memcpy(access(new_obj), old_obj_data, old_data.size);
+    m_metadata.erase(ptr);
     return new_obj;
 }
 
 void gcpp::CopyingCollector::forward_ptr(
     FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited)
 {
-    if (visited.contains(ptr)) {
-        ptr = visited.at(ptr);
-        return;
-    }
     std::stack<std::reference_wrapper<FatPtr>> stack;
     stack.emplace(ptr);
     while (!stack.empty()) {
         auto p = stack.top();
         stack.pop();
-        if (visited.contains(p) || get_space_num(p) == m_space_num) {
+        if (visited.contains(p)) {
+            p.get() = visited.at(p);
+            continue;
+        } else if (get_space_num(p) == m_space_num || !m_metadata.contains(p)) {
             continue;
         }
-        auto [meta_data, data_ptr] = access_with_data(p);
-        scan_memory(reinterpret_cast<ptr_size_t>(data_ptr),
-                    reinterpret_cast<ptr_size_t>(data_ptr) + meta_data.size,
-                    [&stack](auto ptr) { stack.emplace(*ptr); });
+        {
+            auto& meta_data = m_metadata.at(p);
+            auto data_ptr = access(p);
+            scan_memory(reinterpret_cast<uintptr_t>(data_ptr),
+                        reinterpret_cast<uintptr_t>(data_ptr) + meta_data.size,
+                        [&stack](auto ptr) { stack.emplace(*ptr); });
+        }
+        // meta_data& is invalidated by copy
         auto new_ptr = copy(p);
         visited.emplace(p, new_ptr);
         p.get() = new_ptr;

@@ -25,6 +25,7 @@ class CopyingCollector
     /** Index of the space in which we allocate new objects */
     uint8_t m_space_num = 0;
     std::optional<uint8_t> m_promotion_threshold;
+    std::unordered_map<FatPtr, MetaData> m_metadata;
 
   public:
     /**
@@ -34,7 +35,8 @@ class CopyingCollector
      */
     CopyingCollector(size_t size, std::optional<uint8_t> promotion_threshold)
         : m_spaces({MemStore(size >> 1), MemStore(size >> 1)}),
-          m_promotion_threshold(promotion_threshold)
+          m_promotion_threshold(promotion_threshold),
+          m_metadata(m_spaces[0].size() / 4)
     {
         if (size >= ptr_mask) {
             throw std::runtime_error("Heap size too large");
@@ -74,14 +76,6 @@ class CopyingCollector
      * nodes in the graph)
      */
     void forward_ptr(FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited);
-
-    /**
-     * @brief Gets the data pointer for `ptr` and the metadata for the object
-     *
-     * @param ptr
-     * @return std::tuple<MetaData, void*> tuple of metadata and data pointer
-     */
-    std::tuple<MetaData, void*> access_with_data(const FatPtr& ptr) noexcept;
 };
 
 static_assert(Collector<CopyingCollector>);

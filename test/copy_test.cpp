@@ -6,6 +6,7 @@
 
 #include "copy_collector.h"
 #include "copy_collector.inl"
+#include "gc_base.h"
 #include "gc_scan.h"
 
 void alloc_test(size_t total_size, std::function<size_t()> get_size,
@@ -33,7 +34,7 @@ void alloc_test(size_t total_size, std::function<size_t()> get_size,
 TEST(CopyTest, Alloc)
 {
     alloc_test(
-        144, []() { return 16; }, 4);
+        128, []() { return 16; }, 4);
 }
 
 TEST(CopyTest, AllocLarge)
@@ -83,10 +84,12 @@ TEST(CopyTest, Collect)
 TEST(CopyTest, LinkedList)
 {
     gcpp::CopyingCollector collector(1024, std::nullopt);
-    auto node = collector.alloc(20);
+    constexpr auto size = sizeof(FatPtr) + sizeof(int);
+    static_assert(alignof(int) <= alignof(FatPtr));
+    auto node = collector.alloc(size, std::align_val_t{alignof(FatPtr)});
     const auto head = node;
     for (int i = 0; i < 16; ++i) {
-        auto next = collector.alloc(20);
+        auto next = collector.alloc(size, std::align_val_t{alignof(FatPtr)});
         auto data = collector.access(node);
         memcpy(data, &next, sizeof(next));
         memcpy(reinterpret_cast<uint8_t*>(data) + sizeof(next), &i, sizeof(i));
@@ -97,7 +100,10 @@ TEST(CopyTest, LinkedList)
     memcpy(data, &null, sizeof(node));
     int num = 16;
     memcpy(reinterpret_cast<uint8_t*>(data) + sizeof(node), &num, sizeof(num));
-
+    std::vector<FatPtr*> roots;
+    GC_GET_ROOTS(roots);
+    collector.collect(std::ranges::transform_view(
+        roots, [](auto ptr) -> FatPtr& { return *ptr; }));
     int i = 0;
     node = head;
     while (node != null) {
@@ -116,7 +122,7 @@ TEST(CopyTest, AlignedAlloc)
     auto ptr = collector.alloc(64, std::align_val_t{64});
     const auto data = collector.access(ptr);
     memset(data, 1, 64);
-    ASSERT_EQ(reinterpret_cast<ptr_size_t>(data) % 64, 0);
+    ASSERT_EQ(reinterpret_cast<uintptr_t>(data) % 64, 0);
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
     collector.collect(std::ranges::transform_view(
@@ -126,5 +132,5 @@ TEST(CopyTest, AlignedAlloc)
     for (int i = 0; i < 64; ++i) {
         ASSERT_EQ(static_cast<const uint8_t*>(new_data)[i], 1);
     }
-    ASSERT_EQ(reinterpret_cast<ptr_size_t>(new_data) % 64, 0);
+    ASSERT_EQ(reinterpret_cast<uintptr_t>(new_data) % 64, 0);
 }
