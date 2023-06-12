@@ -92,6 +92,25 @@ struct FatPtr {
     {
         return *ptr == ptr_header() && (*(ptr + 1) & ptr_tag_mask) == ptr_tag;
     }
+
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    operator const std::byte*() const
+    {
+        return reinterpret_cast<const std::byte*>(get_gc_ptr().ptr);
+    }
+
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    operator std::byte* const() const
+    {
+        return reinterpret_cast<std::byte* const>(get_gc_ptr().ptr);
+    }
+
+    explicit operator uintptr_t() const { return get_gc_ptr().ptr; }
+
+    inline std::byte* as_ptr() const
+    {
+        return reinterpret_cast<std::byte*>(get_gc_ptr().ptr);
+    }
 };
 // must be trivially copyable to memcpy it
 // must be standard layout so ptr to it is same as ptr to header

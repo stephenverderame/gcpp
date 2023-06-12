@@ -50,13 +50,6 @@ concept Collector = requires(T t) {
     } noexcept -> std::same_as<bool>;
 
     /**
-     * @brief Gets the object pointed to by a FatPtr
-     */
-    {
-        t.access(std::declval<const FatPtr&>())
-    } noexcept -> std::convertible_to<void*>;
-
-    /**
      * @brief Gets the amount of free space on the heap before a collection is
      * required
      */

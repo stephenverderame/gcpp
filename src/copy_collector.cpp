@@ -14,15 +14,6 @@
 /*  The least signficant bit denotes which space the pointer is in
 
 */
-namespace
-{
-
-inline uintptr_t get_heap_idx(const FatPtr& ptr) noexcept
-{
-    return (ptr.get_gc_ptr().ptr >> 1) - 8;
-}
-
-}  // namespace
 
 /** Gets the space number that `ptr` belongs to */
 inline uint8_t get_space_num(const FatPtr& ptr) noexcept
@@ -42,14 +33,6 @@ bool gcpp::CopyingCollector::contains(void* ptr) const noexcept
            (ptr >= m_spaces[1].data() &&
             ptr < m_spaces[1].data() + m_spaces[1].size());
 }
-
-void* gcpp::CopyingCollector::access(const FatPtr& ptr) noexcept
-{
-    auto& space = m_spaces[get_space_num(ptr)];
-    // strip space idx bit
-    uintptr_t idx = get_heap_idx(ptr);
-    return &space[idx];
-}
 /**
  * @brief Determines the number of bytes of padding required to align the
  * address to the given alignment
@@ -68,26 +51,6 @@ uint8_t calc_alignment_bytes(const std::byte* cur_ptr,
     return alignment_bytes;
 }
 
-/*  Dynamic Size Format
-    Little Endian (least significant byte first)
-    MSB is 1 if there are more bytes to read
-
-    |1..|  <- GC idx | first size byte
-    |1..|  <- size
-      .
-      .
-      .
-    |0..|  <- size
-    |..1|  <- alignment
-      .
-      .
-      .
-    |000|  <- last alignment
-    |...|  <- object data
-      .
-      .
-      .
-*/
 FatPtr gcpp::CopyingCollector::alloc(const size_t size,
                                      std::align_val_t alignment)
 {
@@ -98,9 +61,11 @@ FatPtr gcpp::CopyingCollector::alloc(const size_t size,
         calc_alignment_bytes(&m_spaces[m_space_num][m_next], alignment);
 
     if (size + alignment_bytes > free_space()) {
+        // TODO: collection
         throw std::bad_alloc();
     }
-    auto ptr = FatPtr((m_next + alignment_bytes + 8) << 1 | m_space_num);
+    auto ptr = FatPtr(reinterpret_cast<uintptr_t>(
+        &m_spaces[m_space_num][m_next + alignment_bytes]));
     // store size + padding in heap
     m_metadata.emplace(ptr, MetaData{.size = size, .alignment = alignment});
     m_next += size + alignment_bytes;
@@ -114,9 +79,8 @@ FatPtr gcpp::CopyingCollector::copy(const FatPtr& ptr) noexcept
         return ptr;
     }
     const auto old_data = m_metadata.at(ptr);
-    auto old_obj_data = access(ptr);
     auto new_obj = alloc(old_data.size, old_data.alignment);
-    memcpy(access(new_obj), old_obj_data, old_data.size);
+    memcpy(new_obj, ptr, old_data.size);
     m_metadata.erase(ptr);
     return new_obj;
 }
@@ -137,9 +101,8 @@ void gcpp::CopyingCollector::forward_ptr(
         }
         {
             auto& meta_data = m_metadata.at(p);
-            auto data_ptr = access(p);
-            scan_memory(reinterpret_cast<uintptr_t>(data_ptr),
-                        reinterpret_cast<uintptr_t>(data_ptr) + meta_data.size,
+            scan_memory(static_cast<uintptr_t>(p.get()),
+                        static_cast<uintptr_t>(p.get()) + meta_data.size,
                         [&stack](auto ptr) { stack.emplace(*ptr); });
         }
         // meta_data& is invalidated by copy

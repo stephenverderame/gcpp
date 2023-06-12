@@ -21,7 +21,7 @@ std::vector<FatPtr> CopyingCollector::collect(T&& roots) noexcept
     m_next = 0;
     std::unordered_map<FatPtr, FatPtr> visited;
     for (auto& it : std::ranges::filter_view(
-             roots, [this](auto ptr) { return contains(access(ptr)); })) {
+             roots, [this](auto ptr) { return contains(ptr.as_ptr()); })) {
         forward_ptr(it, visited);
     }
     // TODO: promotions

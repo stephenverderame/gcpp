@@ -53,8 +53,6 @@ class CopyingCollector
 
     [[nodiscard]] bool contains(void* ptr) const noexcept;
 
-    void* access(const FatPtr& ptr) noexcept;
-
     [[nodiscard]] size_t free_space() const noexcept;
     /** @} */
 
