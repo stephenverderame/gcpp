@@ -74,6 +74,15 @@ class CopyingCollector
      * nodes in the graph)
      */
     void forward_ptr(FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited);
+
+    /**
+     * @brief Get the space num a pointer belongs to
+     *
+     * @param ptr
+     * @return uint8_t 0 or 1, depending on which space `ptr` belongs in
+     * @throws `std::runtime_error` if `ptr` does not belong to any space
+     */
+    uint8_t get_space_num(const FatPtr& ptr) const;
 };
 
 static_assert(Collector<CopyingCollector>);

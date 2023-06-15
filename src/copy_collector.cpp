@@ -5,20 +5,23 @@
 #include <functional>
 #include <new>
 #include <stack>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_map>
 
 #include "copy_collector.h"
 #include "gc_base.h"
 
-/*  The least signficant bit denotes which space the pointer is in
-
-*/
-
-/** Gets the space number that `ptr` belongs to */
-inline uint8_t get_space_num(const FatPtr& ptr) noexcept
+uint8_t gcpp::CopyingCollector::get_space_num(const FatPtr& ptr) const
 {
-    return ptr.get_gc_ptr().ptr & 1;
+    const auto addr = ptr.as_ptr();
+    for (uint8_t i = 0; i < 2; ++i) {
+        if (addr >= m_spaces[i].data() &&
+            addr < m_spaces[i].data() + m_spaces[i].size()) {
+            return i;
+        }
+    }
+    throw std::runtime_error("Collector does not manage given ptr");
 }
 
 size_t gcpp::CopyingCollector::free_space() const noexcept
@@ -96,7 +99,7 @@ void gcpp::CopyingCollector::forward_ptr(
         if (visited.contains(p)) {
             p.get() = visited.at(p);
             continue;
-        } else if (get_space_num(p) == m_space_num || !m_metadata.contains(p)) {
+        } else if (!m_metadata.contains(p) || get_space_num(p) == m_space_num) {
             continue;
         }
         {

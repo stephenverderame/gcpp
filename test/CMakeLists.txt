@@ -22,3 +22,5 @@ endfunction()
 make_test (scan_test SOURCES scan_test.cpp)
 
 make_test (copy_test SOURCES copy_test.cpp)
+
+make_test (frontend_test SOURCES frontend_test.cpp)

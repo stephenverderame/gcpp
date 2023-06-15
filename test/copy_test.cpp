@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <new>
+#include <optional>
 #include <random>
 #include <ranges>
 
@@ -126,4 +128,39 @@ TEST(CopyTest, AlignedAlloc)
         ASSERT_EQ(new_data[i], std::byte{1});
     }
     ASSERT_EQ(reinterpret_cast<uintptr_t>(new_data) % 64, 0);
+}
+
+__attribute__((noinline)) void alloc_array(gcpp::CopyingCollector& collector)
+{
+    constexpr auto array_size = 13;
+    auto int_array2 = collector.alloc(sizeof(int) * array_size,
+                                      std::align_val_t{alignof(int)});
+    std::vector<FatPtr*> roots;
+    GC_GET_ROOTS(roots);
+    collector.collect(std::ranges::transform_view(
+        roots, [](auto ptr) -> FatPtr& { return *ptr; }));
+    for (int j = 0; j < array_size; ++j) {
+        reinterpret_cast<int*>(int_array2.as_ptr())[j] = 1000 + j;
+    }
+    for (int j = 0; j < array_size; ++j) {
+        ASSERT_EQ(reinterpret_cast<int*>(int_array2.as_ptr())[j], 1000 + j);
+    }
+}
+
+TEST(CopyTest, ArrayCollect)
+{
+    auto collector = gcpp::CopyingCollector(1024, std::nullopt);
+    auto int_array1 =
+        collector.alloc(sizeof(int) * 100, std::align_val_t{alignof(int)});
+    for (int i = 0; i < 100; ++i) {
+        reinterpret_cast<int*>(int_array1.as_ptr())[i] = i;
+    }
+
+    for (int i = 0; i < 64; ++i) {
+        alloc_array(collector);
+    }
+
+    for (int i = 0; i < 100; ++i) {
+        ASSERT_EQ(reinterpret_cast<int*>(int_array1.as_ptr())[i], i);
+    }
 }

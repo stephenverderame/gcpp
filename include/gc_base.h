@@ -73,7 +73,7 @@ struct FatPtr {
      * @param ptr the GC ptr this FatPtr should point to. `ptr` need not contain
      * the tag and should not have any bits set in the most significant byte
      */
-    explicit FatPtr(uintptr_t ptr) : m_ptr((ptr & ptr_mask) | ptr_tag) {}
+    explicit FatPtr(uintptr_t ptr = 0) : m_ptr((ptr & ptr_mask) | ptr_tag) {}
     /**
      * @brief Get the gc ptr (without the tag)
      */
