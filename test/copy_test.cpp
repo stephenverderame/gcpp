@@ -6,17 +6,24 @@
 #include <random>
 #include <ranges>
 
+#include "concurrent_gc.h"
 #include "copy_collector.h"
 #include "copy_collector.inl"
 #include "gc_base.h"
 #include "gc_scan.h"
 
+template <typename T>
+class CopyTest : public testing::Test
+{
+};
+
 using CollectorT = gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
 
+template <typename T>
 void alloc_test(size_t total_size, std::function<size_t()> get_size,
                 uint8_t num_allocs)
 {
-    CollectorT collector(total_size);
+    auto collector = gcpp::CopyingCollector<T>{total_size};
 
     std::vector<std::tuple<FatPtr, size_t, std::byte>> ptrs;
     for (uint8_t i = 0; i < num_allocs; ++i) {
@@ -33,27 +40,28 @@ void alloc_test(size_t total_size, std::function<size_t()> get_size,
         }
     }
 }
-TEST(CopyTest, Alloc)
+TYPED_TEST_SUITE(CopyTest, testing::Types<gcpp::SerialGCPolicy>);
+TYPED_TEST(CopyTest, Alloc)
 {
-    alloc_test(
+    alloc_test<TypeParam>(
         128, []() { return 16; }, 4);
 }
 
-TEST(CopyTest, AllocLarge)
+TYPED_TEST(CopyTest, AllocLarge)
 {
-    alloc_test(
+    alloc_test<TypeParam>(
         1024000, []() { return 1024; }, 20);
 }
 
-TEST(CopyTest, AllocRandom)
+TYPED_TEST(CopyTest, AllocRandom)
 {
-    alloc_test(
+    alloc_test<TypeParam>(
         5120000, []() { return rand() % 5000 + 1; }, 100);
 }
 
-TEST(CopyTest, Collect)
+TYPED_TEST(CopyTest, Collect)
 {
-    CollectorT collector(1024);
+    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     auto persist1 = collector.alloc(16);
     const auto data1 = persist1.as_ptr();
     memset(persist1, 1, 16);
@@ -82,9 +90,9 @@ TEST(CopyTest, Collect)
     ASSERT_NE(new_data2, data2);
 }
 
-TEST(CopyTest, LinkedList)
+TYPED_TEST(CopyTest, LinkedList)
 {
-    CollectorT collector(1024);
+    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     constexpr auto size = sizeof(FatPtr) + sizeof(int);
     static_assert(alignof(int) <= alignof(FatPtr));
     auto node = collector.alloc(size, std::align_val_t{alignof(FatPtr)});
@@ -113,9 +121,9 @@ TEST(CopyTest, LinkedList)
     ASSERT_EQ(i, 17);
 }
 
-TEST(CopyTest, AlignedAlloc)
+TYPED_TEST(CopyTest, AlignedAlloc)
 {
-    CollectorT collector(1024);
+    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     auto ptr = collector.alloc(64, std::align_val_t{64});
     memset(ptr, 1, 64);
     ASSERT_EQ(static_cast<uintptr_t>(ptr) % 64, 0);
@@ -149,9 +157,9 @@ __attribute__((noinline)) void alloc_array(CollectorT& collector)
     }
 }
 
-TEST(CopyTest, ArrayCollect)
+TYPED_TEST(CopyTest, ArrayCollect)
 {
-    auto collector = CollectorT(1024);
+    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     auto int_array1 =
         collector.alloc(sizeof(int) * 100, std::align_val_t{alignof(int)});
     for (int i = 0; i < 100; ++i) {

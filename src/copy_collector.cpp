@@ -8,10 +8,12 @@
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include "collector.h"
 #include "copy_collector.h"
 #include "gc_base.h"
+#include "gc_scan.h"
 
 template <gcpp::CollectorLockingPolicy L>
 uint8_t gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
@@ -72,8 +74,10 @@ FatPtr gcpp::CopyingCollector<L>::alloc(const size_t size,
         calc_alignment_bytes(&m_spaces[m_space_num][m_next], alignment);
 
     if (size + alignment_bytes > free_space()) {
-        // TODO: collection
-        throw std::bad_alloc();
+        collect();
+        if (size + alignment_bytes > free_space()) {
+            throw std::bad_alloc();
+        }
     }
     auto ptr = FatPtr{reinterpret_cast<uintptr_t>(
         &m_spaces[m_space_num][m_next + alignment_bytes])};
@@ -129,6 +133,16 @@ void gcpp::CopyingCollector<L>::forward_ptr(
         visited.emplace(p, new_ptr);
         p.get().atomic_update(new_ptr);
     }
+}
+
+template <gcpp::CollectorLockingPolicy Lock>
+void gcpp::CopyingCollector<Lock>::collect() noexcept
+{
+    // TODO
+    std::vector<FatPtr*> roots;
+    GC_GET_ROOTS(roots);
+    (void)collect(std::ranges::transform_view(
+        roots, [](auto ptr) -> FatPtr& { return *ptr; }));
 }
 
 template class gcpp::CopyingCollector<gcpp::SerialGCPolicy>;

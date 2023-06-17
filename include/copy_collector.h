@@ -85,6 +85,8 @@ class CopyingCollector
      * @throws `std::runtime_error` if `ptr` does not belong to any space
      */
     uint8_t get_space_num(const FatPtr& ptr) const;
+
+    void collect() noexcept;
 };
 
 static_assert(Collector<CopyingCollector<SerialGCPolicy>>);
