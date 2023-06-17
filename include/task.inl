@@ -12,7 +12,7 @@ void gcpp::Task<R>::do_work(std::stop_token stop_token)
         while (!m_has_input) {
             m_input.wait(lk);
             if (stop_token.stop_requested()) {
-                break;
+                return;
             }
         }
         m_has_input = false;

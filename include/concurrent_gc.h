@@ -17,7 +17,6 @@ class ConcurrentGCPolicy
   private:
     std::mutex m_mutex;
     Task<CollectionResultT> m_collect_task;
-    std::future<CollectionResultT> m_collect_fut;
 
   public:
     auto lock() noexcept { return std::unique_lock(m_mutex); }
@@ -30,16 +29,9 @@ class ConcurrentGCPolicy
         return fn();
     }
 
-    void wait_for_collection()
+    auto do_collection(std::function<CollectionResultT()> collect)
     {
-        if (m_collect_fut.valid()) {
-            m_collect_fut.wait();
-        }
-    }
-
-    void do_collection(std::function<CollectionResultT()> collect)
-    {
-        m_collect_fut = m_collect_task.push_work(collect);
+        return m_collect_task.push_work(collect);
     }
 };
 static_assert(CollectorLockingPolicy<ConcurrentGCPolicy>);
@@ -62,9 +54,12 @@ class SerialGCPolicy
 
     void wait_for_collection() {}
 
-    void do_collection(std::function<CollectionResultT()> collect)
+    auto do_collection(std::function<CollectionResultT()> collect)
     {
-        collect();
+        auto pt = std::packaged_task<CollectionResultT()>{collect};
+        auto fut = pt.get_future();
+        pt();
+        return fut;
     }
 };
 static_assert(CollectorLockingPolicy<SerialGCPolicy>);

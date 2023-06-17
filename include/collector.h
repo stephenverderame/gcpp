@@ -1,6 +1,7 @@
 #pragma once
 #include <concepts>
 #include <cstddef>
+#include <future>
 #include <new>
 #include <optional>
 #include <utility>
@@ -30,8 +31,8 @@ concept Collector = requires(T t) {
      * generation. These objects will be removed from the heap.
      */
     {
-        t.collect(std::declval<std::vector<FatPtr>&>())
-    } noexcept -> std::same_as<CollectionResultT>;
+        t.async_collect(std::declval<std::vector<FatPtr>&>())
+    } noexcept -> std::same_as<std::future<CollectionResultT>>;
 
     /**
      * @brief Construct a new Collector object
@@ -85,11 +86,7 @@ concept CollectorLockingPolicy = requires(T t) {
 
     {
         t.do_collection(std::declval<std::function<CollectionResultT()>>())
-    };
-
-    {
-        t.wait_for_collection()
-    };
+    } -> std::same_as<std::future<CollectionResultT>>;
 };
 /**
  * @brief Metadata of an object managed by the GC

@@ -28,6 +28,7 @@ class CopyingCollector
     typename LockPolicy::gc_uint8_t m_space_num = 0;
     std::unordered_map<FatPtr, MetaData> m_metadata;
     LockPolicy m_lock;
+    std::future<CollectionResultT> m_collect_result;
 
   public:
     /**
@@ -50,7 +51,7 @@ class CopyingCollector
 
     template <std::ranges::range T>
     requires std::same_as<std::ranges::range_reference_t<T>, FatPtr&>
-    std::vector<FatPtr> collect(T&& roots) noexcept;
+    std::future<std::vector<FatPtr>> async_collect(T&& roots) noexcept;
 
     [[nodiscard]] bool contains(void* ptr) const noexcept;
 

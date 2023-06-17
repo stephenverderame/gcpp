@@ -23,6 +23,6 @@ void gcpp::collect()
 {
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    g_collector.collect(std::ranges::transform_view(
+    g_collector.async_collect(std::ranges::transform_view(
         roots, [](auto ptr) -> FatPtr& { return *ptr; }));
 }

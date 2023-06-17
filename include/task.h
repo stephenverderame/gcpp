@@ -15,10 +15,10 @@ using std::placeholders::_1;
 template <typename R>
 class Task
 {
-    std::condition_variable m_input;
-    std::mutex m_in_mut;
-    std::packaged_task<R()> m_task;
     bool m_has_input = false;
+    std::condition_variable m_input;
+    mutable std::mutex m_in_mut;
+    std::packaged_task<R()> m_task;
     std::jthread m_thread;
 
     void do_work(std::stop_token stop_token);

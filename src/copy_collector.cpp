@@ -139,9 +139,12 @@ template <gcpp::CollectorLockingPolicy Lock>
 void gcpp::CopyingCollector<Lock>::collect() noexcept
 {
     // TODO
+    if (m_collect_result.valid()) {
+        (void)m_collect_result.get();
+    }
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    (void)collect(std::ranges::transform_view(
+    m_collect_result = async_collect(std::ranges::transform_view(
         roots, [](auto ptr) -> FatPtr& { return *ptr; }));
 }
 
