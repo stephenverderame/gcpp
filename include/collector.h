@@ -9,6 +9,7 @@
 #include "gc_base.h"
 namespace gcpp
 {
+using CollectionResultT = std::vector<FatPtr>;
 /** Static interface for a garbage collector */
 template <typename T>
 concept Collector = requires(T t) {
@@ -30,7 +31,7 @@ concept Collector = requires(T t) {
      */
     {
         t.collect(std::declval<std::vector<FatPtr>&>())
-    } noexcept -> std::same_as<std::vector<FatPtr>>;
+    } noexcept -> std::same_as<CollectionResultT>;
 
     /**
      * @brief Construct a new Collector object
@@ -40,7 +41,7 @@ concept Collector = requires(T t) {
      * to be promoted to the next generation, or none if the object should never
      * be promoted
      */
-    T(std::declval<std::size_t>(), std::declval<std::optional<unsigned>>());
+    T(std::declval<std::size_t>());
 
     /**
      * @brief Determines if a pointer is in the heap managed by this collector
@@ -64,37 +65,31 @@ concept CollectorLockingPolicy = requires(T t) {
      * @brief Locks the collector
      */
     {
-        t.lock_self()
+        t.lock()
     } noexcept;
 
-    /**
-     * @brief Unlocks the collector
-     */
-    {
-        t.unlock_self()
-    } noexcept -> std::same_as<void>;
+    // {
+    //     t.notify_alloc(std::declval<const FatPtr&>())
+    // } -> std::same_as<void>;
 
-    /**
-     * @brief Locks the a given GC object
-     */
-    {
-        t.lock(std::declval<const FatPtr&>())
-    } noexcept;
+    // {
+    //     t.notify_collect(std::declval<const FatPtr&>())
+    // } noexcept -> std::same_as<void>;
 
-    /**
-     * @brief Unlocks the given GC object
-     */
-    {
-        t.unlock(std::declval<const FatPtr&>())
-    } noexcept -> std::same_as<void>;
+    typename T::gc_size_t;
+    typename T::gc_uint8_t;
 
     {
-        t.notify_alloc(std::declval<const FatPtr&>())
-    } -> std::same_as<void>;
+        t.do_concurrent(std::declval<std::function<int()>>)
+    };
 
     {
-        t.notify_collect(std::declval<const FatPtr&>())
-    } noexcept -> std::same_as<void>;
+        t.do_collection(std::declval<std::function<CollectionResultT()>>())
+    };
+
+    {
+        t.wait_for_collection()
+    };
 };
 /**
  * @brief Metadata of an object managed by the GC

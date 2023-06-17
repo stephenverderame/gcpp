@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <type_traits>
@@ -110,6 +111,25 @@ struct FatPtr {
     inline std::byte* as_ptr() const
     {
         return reinterpret_cast<std::byte*>(get_gc_ptr().ptr);
+    }
+
+    inline void atomic_update(FatPtr other) noexcept
+    {
+        assert((reinterpret_cast<uintptr_t>(&m_ptr) &
+                (alignof(uintptr_t) - 1)) == 0);
+        /*
+            On x86, the move instruction to an aligned address is atomic
+            To make sure the compiler directly uses a single move instruction
+            to update `m_ptr`, we write the assembly directly.
+
+            Another option is to have the FatPtr templated on a locking policy
+            and contain a lock. Since we have other x86 assembly inlined, I'll
+           try this first.
+        */
+        asm("mov %1, %%rcx\n"
+            "mov %%rcx, %0"
+            : "=r"(m_ptr)
+            : "r"(other.m_ptr));
     }
 };
 // must be trivially copyable to memcpy it

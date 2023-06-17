@@ -11,10 +11,12 @@
 #include "gc_base.h"
 #include "gc_scan.h"
 
+using CollectorT = gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
+
 void alloc_test(size_t total_size, std::function<size_t()> get_size,
                 uint8_t num_allocs)
 {
-    gcpp::CopyingCollector collector(total_size, std::nullopt);
+    CollectorT collector(total_size);
 
     std::vector<std::tuple<FatPtr, size_t, std::byte>> ptrs;
     for (uint8_t i = 0; i < num_allocs; ++i) {
@@ -51,7 +53,7 @@ TEST(CopyTest, AllocRandom)
 
 TEST(CopyTest, Collect)
 {
-    gcpp::CopyingCollector collector(1024, std::nullopt);
+    CollectorT collector(1024);
     auto persist1 = collector.alloc(16);
     const auto data1 = persist1.as_ptr();
     memset(persist1, 1, 16);
@@ -82,7 +84,7 @@ TEST(CopyTest, Collect)
 
 TEST(CopyTest, LinkedList)
 {
-    gcpp::CopyingCollector collector(1024, std::nullopt);
+    CollectorT collector(1024);
     constexpr auto size = sizeof(FatPtr) + sizeof(int);
     static_assert(alignof(int) <= alignof(FatPtr));
     auto node = collector.alloc(size, std::align_val_t{alignof(FatPtr)});
@@ -113,7 +115,7 @@ TEST(CopyTest, LinkedList)
 
 TEST(CopyTest, AlignedAlloc)
 {
-    gcpp::CopyingCollector collector(1024, std::nullopt);
+    CollectorT collector(1024);
     auto ptr = collector.alloc(64, std::align_val_t{64});
     memset(ptr, 1, 64);
     ASSERT_EQ(static_cast<uintptr_t>(ptr) % 64, 0);
@@ -130,7 +132,7 @@ TEST(CopyTest, AlignedAlloc)
     ASSERT_EQ(reinterpret_cast<uintptr_t>(new_data) % 64, 0);
 }
 
-__attribute__((noinline)) void alloc_array(gcpp::CopyingCollector& collector)
+__attribute__((noinline)) void alloc_array(CollectorT& collector)
 {
     constexpr auto array_size = 13;
     auto int_array2 = collector.alloc(sizeof(int) * array_size,
@@ -149,7 +151,7 @@ __attribute__((noinline)) void alloc_array(gcpp::CopyingCollector& collector)
 
 TEST(CopyTest, ArrayCollect)
 {
-    auto collector = gcpp::CopyingCollector(1024, std::nullopt);
+    auto collector = CollectorT(1024);
     auto int_array1 =
         collector.alloc(sizeof(int) * 100, std::align_val_t{alignof(int)});
     for (int i = 0; i < 100; ++i) {

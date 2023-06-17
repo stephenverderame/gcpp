@@ -7,10 +7,12 @@
 #include <vector>
 
 #include "collector.h"
+#include "concurrent_gc.h"
 #include "gc_base.h"
 
 namespace gcpp
 {
+template <CollectorLockingPolicy LockPolicy>
 class CopyingCollector
 {
     using MemStore = std::vector<std::byte, AlignedAllocator<std::byte>>;
@@ -19,13 +21,13 @@ class CopyingCollector
     /** The two spaces of the heap */
     std::array<MemStore, 2> m_spaces;
     /** Next index to allocate an object */
-    size_t m_next = 0;
+    typename LockPolicy::gc_size_t m_next = 0;
     /** Next index of object to move onto the to space */
     // size_t m_scan = 0;
     /** Index of the space in which we allocate new objects */
-    uint8_t m_space_num = 0;
-    std::optional<uint8_t> m_promotion_threshold;
+    typename LockPolicy::gc_uint8_t m_space_num = 0;
     std::unordered_map<FatPtr, MetaData> m_metadata;
+    LockPolicy m_lock;
 
   public:
     /**
@@ -33,9 +35,8 @@ class CopyingCollector
      * @see Collector
      * @{
      */
-    CopyingCollector(size_t size, std::optional<uint8_t> promotion_threshold)
+    explicit CopyingCollector(size_t size)
         : m_spaces({MemStore(size >> 1), MemStore(size >> 1)}),
-          m_promotion_threshold(promotion_threshold),
           m_metadata(m_spaces[0].size() / 4)
     {
         if (size >= ptr_mask) {
@@ -63,7 +64,7 @@ class CopyingCollector
      * @param ptr pointer to object to copy
      * @return FatPtr pointer to the copy of the object
      */
-    [[nodiscard]] FatPtr copy(const FatPtr& ptr) noexcept;
+    [[nodiscard]] FatPtr copy(uint8_t to_space, const FatPtr& ptr) noexcept;
 
     /**
      * @brief Forwards a pointer to the other space
@@ -73,7 +74,8 @@ class CopyingCollector
      * @param visited set of pointers that have already been forwarded (black
      * nodes in the graph)
      */
-    void forward_ptr(FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited);
+    void forward_ptr(uint8_t to_space, FatPtr& ptr,
+                     std::unordered_map<FatPtr, FatPtr>& visited);
 
     /**
      * @brief Get the space num a pointer belongs to
@@ -85,5 +87,6 @@ class CopyingCollector
     uint8_t get_space_num(const FatPtr& ptr) const;
 };
 
-static_assert(Collector<CopyingCollector>);
+static_assert(Collector<CopyingCollector<SerialGCPolicy>>);
+static_assert(Collector<CopyingCollector<ConcurrentGCPolicy>>);
 }  // namespace gcpp
