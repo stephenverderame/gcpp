@@ -173,15 +173,12 @@ TYPED_TEST(CopyTest, ArrayCollect)
 template <typename T>
 void alloc(gcpp::CopyingCollector<T>& collector, size_t size)
 {
-    if (collector.free_space() <= size) {
-        collector.collect();
-    }
     auto ptr = collector.alloc(size);
     auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
     memset(array, 0, size);
 }
 
-TYPED_TEST(CopyTest, DISABLED_AutoCollect)
+TYPED_TEST(CopyTest, AutoCollect)
 {
     gcpp::CopyingCollector<TypeParam> collector(1024);
     auto ptr = collector.alloc(100);
@@ -192,6 +189,29 @@ TYPED_TEST(CopyTest, DISABLED_AutoCollect)
     for (int i = 0; i < 64; ++i) {
         alloc(collector, 100);
     }
+    array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
+    for (size_t i = 0; i < 100; ++i) {
+        ASSERT_EQ(array[i], i & 0xFF);
+    }
+}
+
+TYPED_TEST(CopyTest, RepeatedRealloc)
+{
+    gcpp::CopyingCollector<TypeParam> collector(1024);
+    auto ptr = collector.alloc(100);
+    auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
+    for (size_t i = 0; i < 100; ++i) {
+        array[i] = i & 0xFF;
+    }
+    for (int i = 0; i < 128; ++i) {
+        auto ptr2 = collector.alloc(100);
+        array = reinterpret_cast<uint8_t*>(ptr2.as_ptr());
+        memset(array, i, 100);
+        for (size_t j = 0; j < 100; ++j) {
+            ASSERT_EQ(array[j], i);
+        }
+    }
+    array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
     for (size_t i = 0; i < 100; ++i) {
         ASSERT_EQ(array[i], i & 0xFF);
     }
