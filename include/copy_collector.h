@@ -27,8 +27,8 @@ class CopyingCollector
     /** Index of the space in which we allocate new objects */
     typename LockPolicy::gc_uint8_t m_space_num = 0;
     std::unordered_map<FatPtr, MetaData> m_metadata;
-    LockPolicy m_lock;
     std::future<CollectionResultT> m_collect_result;
+    LockPolicy m_lock;
 
   public:
     /**
@@ -49,9 +49,8 @@ class CopyingCollector
                                std::align_val_t alignment = std::align_val_t{
                                    1});
 
-    template <std::ranges::range T>
-    requires std::same_as<std::ranges::range_reference_t<T>, FatPtr&>
-    std::future<std::vector<FatPtr>> async_collect(T&& roots) noexcept;
+    std::future<std::vector<FatPtr>> async_collect(
+        const std::vector<FatPtr*>& roots) noexcept;
 
     [[nodiscard]] bool contains(void* ptr) const noexcept;
 
@@ -71,9 +70,9 @@ class CopyingCollector
      * @brief Forwards a pointer to the other space
      * Forwards the pointer and all members via depth-first traversal
      *
-     * @param ptr pointer to forward
-     * @param visited set of pointers that have already been forwarded (black
-     * nodes in the graph)
+     * @param ptr [in/out] pointer to forward
+     * @param visited [in/out] set of pointers that have already been forwarded
+     * (black nodes in the graph)
      */
     void forward_ptr(uint8_t to_space, FatPtr& ptr,
                      std::unordered_map<FatPtr, FatPtr>& visited);
@@ -87,6 +86,11 @@ class CopyingCollector
      */
     uint8_t get_space_num(const FatPtr& ptr) const;
 
+    /**
+     * @brief Dispatches an async collection task
+     * Waits for the current collection to finish before starting a new one
+     * if one is already in progress
+     */
     void collect() noexcept;
 };
 

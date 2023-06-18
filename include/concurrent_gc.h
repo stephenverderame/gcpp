@@ -13,13 +13,14 @@ class ConcurrentGCPolicy
   public:
     using gc_size_t = std::atomic<size_t>;
     using gc_uint8_t = std::atomic<uint8_t>;
+    using lock_t = std::unique_lock<std::mutex>;
 
   private:
     std::mutex m_mutex;
     Task<CollectionResultT> m_collect_task;
 
   public:
-    auto lock() noexcept { return std::unique_lock(m_mutex); }
+    lock_t lock() noexcept { return std::unique_lock(m_mutex); }
 
     template <typename T>
     requires std::invocable<T>
@@ -33,6 +34,9 @@ class ConcurrentGCPolicy
     {
         return m_collect_task.push_work(collect);
     }
+
+    static void acquire(lock_t& lk) { lk.lock(); }
+    static void release(lock_t& lk) { lk.unlock(); }
 };
 static_assert(CollectorLockingPolicy<ConcurrentGCPolicy>);
 
@@ -41,9 +45,10 @@ class SerialGCPolicy
   public:
     using gc_size_t = size_t;
     using gc_uint8_t = uint8_t;
+    using lock_t = int;
 
   public:
-    auto lock() noexcept { return 0; }
+    lock_t lock() noexcept { return 0; }
 
     template <typename T>
     requires std::invocable<T>
@@ -61,6 +66,9 @@ class SerialGCPolicy
         pt();
         return fut;
     }
+
+    static void acquire(lock_t&) {}
+    static void release(lock_t&) {}
 };
 static_assert(CollectorLockingPolicy<SerialGCPolicy>);
 }  // namespace gcpp

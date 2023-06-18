@@ -1,7 +1,7 @@
 #include "safe_alloc.h"
 
 #include "concurrent_gc.h"
-#include "copy_collector.inl"
+#include "copy_collector.h"
 #include "gc_scan.h"
 using collector_t = gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
 constexpr uintptr_t heap_size = 51200;
@@ -23,6 +23,5 @@ void gcpp::collect()
 {
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    g_collector.async_collect(std::ranges::transform_view(
-        roots, [](auto ptr) -> FatPtr& { return *ptr; }));
+    g_collector.async_collect(roots);
 }

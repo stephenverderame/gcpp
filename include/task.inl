@@ -9,14 +9,19 @@ void gcpp::Task<R>::do_work(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested()) {
         std::unique_lock lk(m_in_mut);
-        while (!m_has_input) {
+        while (m_tasks.empty()) {
             m_input.wait(lk);
             if (stop_token.stop_requested()) {
                 return;
             }
         }
-        m_has_input = false;
-        m_task();
+        auto& task = m_tasks.front();
+        lk.unlock();
+        printf("Collecting\n");
+        task();
+        printf("Collected\n");
+        lk.lock();
+        m_tasks.pop();
     }
 }
 
@@ -31,17 +36,18 @@ template <typename R>
 bool gcpp::Task<R>::has_work() const
 {
     std::lock_guard g(m_in_mut);
-    return m_has_input;
+    return !m_tasks.empty();
 }
 
 template <typename R>
 std::future<R> gcpp::Task<R>::push_work(std::function<R()> f)
 {
+    std::future<R> res;
     {
         auto lk = std::unique_lock{m_in_mut};
-        m_task = std::packaged_task<R()>{f};
-        m_has_input = true;
+        m_tasks.emplace(f);
+        res = m_tasks.back().get_future();
     }
     m_input.notify_one();
-    return m_task.get_future();
+    return res;
 }

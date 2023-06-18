@@ -31,7 +31,7 @@ concept Collector = requires(T t) {
      * generation. These objects will be removed from the heap.
      */
     {
-        t.async_collect(std::declval<std::vector<FatPtr>&>())
+        t.async_collect(std::declval<std::vector<FatPtr*>&>())
     } noexcept -> std::same_as<std::future<CollectionResultT>>;
 
     /**
@@ -62,12 +62,13 @@ concept Collector = requires(T t) {
 
 template <typename T>
 concept CollectorLockingPolicy = requires(T t) {
+    typename T::lock_t;
     /**
      * @brief Locks the collector
      */
     {
         t.lock()
-    } noexcept;
+    } noexcept -> std::same_as<typename T::lock_t>;
 
     // {
     //     t.notify_alloc(std::declval<const FatPtr&>())
@@ -87,6 +88,14 @@ concept CollectorLockingPolicy = requires(T t) {
     {
         t.do_collection(std::declval<std::function<CollectionResultT()>>())
     } -> std::same_as<std::future<CollectionResultT>>;
+
+    {
+        T::acquire(std::declval<typename T::lock_t&>())
+    };
+
+    {
+        T::release(std::declval<typename T::lock_t&>())
+    };
 };
 /**
  * @brief Metadata of an object managed by the GC

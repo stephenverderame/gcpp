@@ -1,4 +1,4 @@
-#include "copy_collector.inl"
+#include "copy_collector.h"
 
 #include <cstddef>
 #include <cstring>
@@ -14,6 +14,25 @@
 #include "copy_collector.h"
 #include "gc_base.h"
 #include "gc_scan.h"
+
+namespace
+{
+inline uint8_t other_space_num(uint8_t space_num) noexcept
+{
+    return space_num == 0 ? 1 : 0;
+}
+
+template <typename T>
+inline T load(T a)
+{
+    return a;
+}
+template <typename T>
+inline T load(const std::atomic<T>& a)
+{
+    return a.load();
+}
+}  // namespace
 
 template <gcpp::CollectorLockingPolicy L>
 uint8_t gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
@@ -74,10 +93,12 @@ FatPtr gcpp::CopyingCollector<L>::alloc(const size_t size,
         calc_alignment_bytes(&m_spaces[m_space_num][m_next], alignment);
 
     if (size + alignment_bytes > free_space()) {
+        L::release(lk);
         collect();
         if (size + alignment_bytes > free_space()) {
             throw std::bad_alloc();
         }
+        return alloc(size, alignment);
     }
     auto ptr = FatPtr{reinterpret_cast<uintptr_t>(
         &m_spaces[m_space_num][m_next + alignment_bytes])};
@@ -135,6 +156,31 @@ void gcpp::CopyingCollector<L>::forward_ptr(
     }
 }
 
+template <gcpp::CollectorLockingPolicy LockPolicy>
+std::future<std::vector<FatPtr>>
+gcpp::CopyingCollector<LockPolicy>::async_collect(
+    const std::vector<FatPtr*>& roots) noexcept
+{
+    const uint8_t to_space = [this]() {
+        auto lk = m_lock.lock();
+        m_space_num = other_space_num(m_space_num);
+        (void)lk;
+        return load(m_space_num);
+    }();
+    m_next = 0;
+    return m_lock.do_collection([this, roots, to_space]() {
+        std::vector<FatPtr> promoted;
+        std::unordered_map<FatPtr, FatPtr> visited;
+        for (auto* it : roots | std::views::filter([this](auto ptr) {
+                            return contains(ptr->as_ptr());
+                        })) {
+            forward_ptr(to_space, *it, visited);
+        }
+        // TODO promotions
+        return promoted;
+    });
+}
+
 template <gcpp::CollectorLockingPolicy Lock>
 void gcpp::CopyingCollector<Lock>::collect() noexcept
 {
@@ -144,8 +190,7 @@ void gcpp::CopyingCollector<Lock>::collect() noexcept
     }
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    m_collect_result = async_collect(std::ranges::transform_view(
-        roots, [](auto ptr) -> FatPtr& { return *ptr; }));
+    m_collect_result = async_collect(roots);
 }
 
 template class gcpp::CopyingCollector<gcpp::SerialGCPolicy>;

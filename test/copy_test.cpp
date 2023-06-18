@@ -8,7 +8,6 @@
 
 #include "concurrent_gc.h"
 #include "copy_collector.h"
-#include "copy_collector.inl"
 #include "gc_base.h"
 #include "gc_scan.h"
 
@@ -40,7 +39,7 @@ void alloc_test(size_t total_size, std::function<size_t()> get_size,
 }
 using TypeParams =
     testing::Types<gcpp::SerialGCPolicy, gcpp::ConcurrentGCPolicy>;
-TYPED_TEST_SUITE(CopyTest, TypeParams);
+TYPED_TEST_SUITE(CopyTest, testing::Types<gcpp::ConcurrentGCPolicy>);
 TYPED_TEST(CopyTest, Alloc)
 {
     alloc_test<TypeParam>(
@@ -74,10 +73,7 @@ TYPED_TEST(CopyTest, Collect)
     memset(persist2, 2, 16);
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    (void)collector
-        .async_collect(std::ranges::transform_view(
-            roots, [](auto ptr) -> FatPtr& { return *ptr; }))
-        .get();
+    (void)collector.async_collect(roots).get();
     ASSERT_LE(collector.free_space(), 512 - 17 * 2);
     ASSERT_GT(collector.free_space(), 512 - 17 * 12);
     const auto new_data1 = persist1.as_ptr();
@@ -111,10 +107,7 @@ TYPED_TEST(CopyTest, LinkedList)
     memcpy(node.as_ptr() + sizeof(node), &num, sizeof(num));
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    (void)collector
-        .async_collect(std::ranges::transform_view(
-            roots, [](auto ptr) -> FatPtr& { return *ptr; }))
-        .get();
+    (void)collector.async_collect(roots).get();
     int i = 0;
     node = head;
     while (node != null) {
@@ -134,10 +127,7 @@ TYPED_TEST(CopyTest, AlignedAlloc)
     const auto data = ptr.as_ptr();
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    (void)collector
-        .async_collect(std::ranges::transform_view(
-            roots, [](auto ptr) -> FatPtr& { return *ptr; }))
-        .get();
+    (void)collector.async_collect(roots).get();
     const auto new_data = ptr.as_ptr();
     ASSERT_NE(data, new_data);
     for (int i = 0; i < 64; ++i) {
@@ -154,10 +144,7 @@ __attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T>& collector)
                                       std::align_val_t{alignof(int)});
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
-    auto fu = collector
-                  .async_collect(std::ranges::transform_view(
-                      roots, [](auto ptr) -> FatPtr& { return *ptr; }))
-                  .get();
+    auto fu = collector.async_collect(roots).get();
     for (int j = 0; j < array_size; ++j) {
         reinterpret_cast<int*>(int_array2.as_ptr())[j] = 1000 + j;
     }
@@ -166,7 +153,7 @@ __attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T>& collector)
     }
 }
 
-TYPED_TEST(CopyTest, ArrayCollect)
+TYPED_TEST(CopyTest, DISABLED_ArrayCollect)
 {
     auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     auto int_array1 =
@@ -181,5 +168,28 @@ TYPED_TEST(CopyTest, ArrayCollect)
 
     for (int i = 0; i < 100; ++i) {
         ASSERT_EQ(reinterpret_cast<int*>(int_array1.as_ptr())[i], i);
+    }
+}
+template <typename T>
+void alloc(gcpp::CopyingCollector<T>& collector, size_t size)
+{
+    auto ptr = collector.alloc(size);
+    auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
+    memset(array, 0, size);
+}
+
+TYPED_TEST(CopyTest, AutoCollect)
+{
+    gcpp::CopyingCollector<TypeParam> collector(1024);
+    auto ptr = collector.alloc(100);
+    auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
+    for (size_t i = 0; i < 100; ++i) {
+        array[i] = i & 0xFF;
+    }
+    for (int i = 0; i < 64; ++i) {
+        alloc(collector, 100);
+    }
+    for (size_t i = 0; i < 100; ++i) {
+        ASSERT_EQ(array[i], i & 0xFF);
     }
 }

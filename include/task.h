@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <functional>
 #include <future>
+#include <queue>
 #include <thread>
 namespace gcpp
 {
@@ -15,10 +16,9 @@ using std::placeholders::_1;
 template <typename R>
 class Task
 {
-    bool m_has_input = false;
     std::condition_variable m_input;
     mutable std::mutex m_in_mut;
-    std::packaged_task<R()> m_task;
+    std::queue<std::packaged_task<R()>> m_tasks;
     std::jthread m_thread;
 
     void do_work(std::stop_token stop_token);
@@ -33,7 +33,6 @@ class Task
 
     /**
      * @brief Gives work to the worker thread
-     * Requires `has_work()` is `false`
      *
      * @tparam R return type
      * @param f callable
