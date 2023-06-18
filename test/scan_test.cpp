@@ -119,3 +119,20 @@ void rec_right(uintptr_t i, uintptr_t max_size)
     (void)ptr;
 }
 TEST(ScanTest, RightRecursiveTest) { rec_right(1, 101); }
+
+TEST(FatPtrTest, AtomicOps)
+{
+    FatPtr ptr{0x1000};
+    FatPtr ptr2{0x2000};
+    FatPtr ptr3{0x3000};
+    FatPtr ptr4{0x4000};
+    ptr.atomic_update(ptr2);
+    ASSERT_EQ(ptr, ptr2);
+    auto res = ptr.compare_exchange(ptr2, ptr3);
+    ASSERT_EQ(ptr, ptr3);
+    ASSERT_TRUE(!res.has_value());
+    res = ptr.compare_exchange(ptr2, ptr4);
+    ASSERT_TRUE(res.has_value());
+    ASSERT_EQ(res.value_or(FatPtr{0x0}), ptr3);
+    ASSERT_EQ(ptr, ptr3);
+}

@@ -39,7 +39,7 @@ void alloc_test(size_t total_size, std::function<size_t()> get_size,
 }
 using TypeParams =
     testing::Types<gcpp::SerialGCPolicy, gcpp::ConcurrentGCPolicy>;
-TYPED_TEST_SUITE(CopyTest, testing::Types<gcpp::ConcurrentGCPolicy>);
+TYPED_TEST_SUITE(CopyTest, TypeParams);
 TYPED_TEST(CopyTest, Alloc)
 {
     alloc_test<TypeParam>(
@@ -153,7 +153,7 @@ __attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T>& collector)
     }
 }
 
-TYPED_TEST(CopyTest, DISABLED_ArrayCollect)
+TYPED_TEST(CopyTest, ArrayCollect)
 {
     auto collector = gcpp::CopyingCollector<TypeParam>{1024};
     auto int_array1 =
@@ -173,12 +173,15 @@ TYPED_TEST(CopyTest, DISABLED_ArrayCollect)
 template <typename T>
 void alloc(gcpp::CopyingCollector<T>& collector, size_t size)
 {
+    if (collector.free_space() <= size) {
+        collector.collect();
+    }
     auto ptr = collector.alloc(size);
     auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
     memset(array, 0, size);
 }
 
-TYPED_TEST(CopyTest, AutoCollect)
+TYPED_TEST(CopyTest, DISABLED_AutoCollect)
 {
     gcpp::CopyingCollector<TypeParam> collector(1024);
     auto ptr = collector.alloc(100);

@@ -1,5 +1,6 @@
 #include "copy_collector.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <functional>
@@ -17,10 +18,6 @@
 
 namespace
 {
-inline uint8_t other_space_num(uint8_t space_num) noexcept
-{
-    return space_num == 0 ? 1 : 0;
-}
 
 template <typename T>
 inline T load(T a)
@@ -32,17 +29,78 @@ inline T load(const std::atomic<T>& a)
 {
     return a.load();
 }
+
+template <typename T>
+inline T fetch_add(std::atomic<T>& a, T b)
+{
+    return a.fetch_add(b);
+}
+
+template <typename T>
+inline T fetch_add(T& a, T b)
+{
+    auto tmp = a;
+    a += b;
+    return tmp;
+}
+
+template <typename T>
+inline bool compare_exchange(std::atomic<T>& a, T& expected, T desired)
+{
+    return a.compare_exchange_strong(expected, desired);
+}
+
+template <typename T>
+inline bool compare_exchange(T& a, T& expected, T desired)
+{
+    if (a == expected) {
+        a = desired;
+        return true;
+    }
+    expected = a;
+    return false;
+}
+
+template <typename T>
+inline T fetch_xor(std::atomic<T>& a, T b)
+{
+    return a.fetch_xor(b);
+}
+
+template <typename T>
+inline T fetch_xor(T& a, T b)
+{
+    auto tmp = a;
+    a ^= b;
+    return tmp;
+}
+/**
+ * @brief Atomically flips the given space number
+ *
+ * @tparam T
+ * @param space_num [in/out] current space number
+ * @return gcpp::SpaceNum pair of the old and new space number
+ */
+template <typename T>
+inline std::pair<gcpp::SpaceNum, gcpp::SpaceNum> flip_space(
+    T& space_num) noexcept
+{
+    const auto old = fetch_xor(space_num, static_cast<uint8_t>(1));
+    return std::make_pair(gcpp::SpaceNum{old},
+                          static_cast<gcpp::SpaceNum>(old ^ 1));
+}
+
 }  // namespace
 
 template <gcpp::CollectorLockingPolicy L>
-uint8_t gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
+gcpp::SpaceNum gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
 {
     // safe w/o lock bc we never reallocate m_spaces
     const auto addr = ptr.as_ptr();
     for (uint8_t i = 0; i < 2; ++i) {
         if (addr >= m_spaces[i].data() &&
             addr < m_spaces[i].data() + m_spaces[i].size()) {
-            return i;
+            return SpaceNum{i};
         }
     }
     throw std::runtime_error("Collector does not manage given ptr");
@@ -52,7 +110,12 @@ template <gcpp::CollectorLockingPolicy L>
 size_t gcpp::CopyingCollector<L>::free_space() const noexcept
 {
     // safe w/o lock (never update m_spaces)
-    return m_spaces[m_space_num].size() - m_next;
+    const auto sp_num = load(m_space_num);
+    const auto next = load(m_nexts[sp_num]);
+    if (next >= m_max_alloc_size) {
+        return 0;
+    }
+    return m_max_alloc_size - next;
 }
 
 template <gcpp::CollectorLockingPolicy L>
@@ -82,34 +145,52 @@ uint8_t calc_alignment_bytes(const std::byte* cur_ptr,
     return alignment_bytes;
 }
 template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::alloc(const size_t size,
-                                        std::align_val_t alignment)
+FatPtr gcpp::CopyingCollector<L>::alloc_no_constraints(
+    SpaceNum to_space_num, const MetaData& meta_data, size_t index)
 {
-    if (size == 0) {
+    if (meta_data.size + index >= m_spaces[0].size()) {
         throw std::bad_alloc();
     }
-    auto lk = m_lock.lock();
-    const auto alignment_bytes =
-        calc_alignment_bytes(&m_spaces[m_space_num][m_next], alignment);
-
-    if (size + alignment_bytes > free_space()) {
-        L::release(lk);
-        collect();
-        if (size + alignment_bytes > free_space()) {
-            throw std::bad_alloc();
-        }
-        return alloc(size, alignment);
-    }
     auto ptr = FatPtr{reinterpret_cast<uintptr_t>(
-        &m_spaces[m_space_num][m_next + alignment_bytes])};
+        &m_spaces[static_cast<uint8_t>(to_space_num)][index])};
     // store size + padding in heap
-    m_metadata.emplace(ptr, MetaData{.size = size, .alignment = alignment});
-    m_next += size + alignment_bytes;
+    auto lk = m_lock.lock();
+    m_metadata.emplace(ptr, meta_data);
     (void)lk;
     return ptr;
 }
 template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::copy(uint8_t to_space,
+FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
+                                                std::align_val_t alignment,
+                                                uint8_t attempts)
+{
+    const auto to_space = SpaceNum{load(m_space_num)};
+    const auto alloc_index = reserve_space(size, to_space, alignment);
+    if (alloc_index + size >= m_max_alloc_size) {
+        if (attempts == 0) {
+            collect();
+            return alloc_attempt(size, alignment, 1);
+        } else {
+            throw std::bad_alloc();
+        }
+    }
+    return alloc_no_constraints(to_space, {size, alignment}, alloc_index);
+}
+template <gcpp::CollectorLockingPolicy L>
+size_t gcpp::CopyingCollector<L>::reserve_space(size_t size, SpaceNum to_space,
+                                                std::align_val_t alignment)
+{
+    size_t next = m_nexts[static_cast<uint8_t>(to_space)];
+    uint8_t padding_bytes = 0;
+    do {
+        padding_bytes = calc_alignment_bytes(
+            &m_spaces[static_cast<uint8_t>(to_space)][next], alignment);
+    } while (!compare_exchange(m_nexts[static_cast<uint8_t>(to_space)], next,
+                               next + size + padding_bytes));
+    return next + padding_bytes;
+}
+template <gcpp::CollectorLockingPolicy L>
+FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space,
                                        const FatPtr& ptr) noexcept
 {
     if (get_space_num(ptr) == to_space) {
@@ -118,7 +199,8 @@ FatPtr gcpp::CopyingCollector<L>::copy(uint8_t to_space,
     }
     const auto old_data =
         m_lock.do_concurrent([this, ptr]() { return m_metadata.at(ptr); });
-    auto new_obj = alloc(old_data.size, old_data.alignment);
+    auto index = reserve_space(old_data.size, to_space, old_data.alignment);
+    auto new_obj = alloc_no_constraints(to_space, old_data, index);
     memcpy(new_obj, ptr, old_data.size);
     auto lk = m_lock.lock();
     m_metadata.erase(ptr);
@@ -127,32 +209,33 @@ FatPtr gcpp::CopyingCollector<L>::copy(uint8_t to_space,
 }
 template <gcpp::CollectorLockingPolicy L>
 void gcpp::CopyingCollector<L>::forward_ptr(
-    uint8_t to_space, FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited)
+    SpaceNum to_space, FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited)
 {
     std::stack<std::reference_wrapper<FatPtr>> stack;
     stack.emplace(ptr);
     while (!stack.empty()) {
         auto p = stack.top();
+        auto ptr_val = p.get();
         stack.pop();
-        if (visited.contains(p)) {
-            p.get().atomic_update(visited.at(p));
+        if (m_lock.do_concurrent(
+                [this, ptr_val]() { return !m_metadata.contains(ptr_val); }) ||
+            get_space_num(ptr_val) == to_space) {
             continue;
-        } else if (m_lock.do_concurrent(
-                       [this, p]() { return !m_metadata.contains(p); }) ||
-                   get_space_num(p) == to_space) {
+        } else if (visited.contains(ptr_val)) {
+            p.get().compare_exchange(ptr_val, visited.at(ptr_val));
             continue;
         }
         {
-            auto meta_data =
-                m_lock.do_concurrent([this, p]() { return m_metadata.at(p); });
-            scan_memory(static_cast<uintptr_t>(p.get()),
-                        static_cast<uintptr_t>(p.get()) + meta_data.size,
+            auto meta_data = m_lock.do_concurrent(
+                [this, ptr_val]() { return m_metadata.at(ptr_val); });
+            scan_memory(static_cast<uintptr_t>(ptr_val),
+                        static_cast<uintptr_t>(ptr_val) + meta_data.size,
                         [&stack](auto ptr) { stack.emplace(*ptr); });
         }
         // meta_data& is invalidated by copy
-        auto new_ptr = copy(to_space, p);
-        visited.emplace(p, new_ptr);
-        p.get().atomic_update(new_ptr);
+        auto new_ptr = copy(to_space, ptr_val);
+        visited.emplace(ptr_val, new_ptr);
+        p.get().compare_exchange(ptr_val, new_ptr);
     }
 }
 
@@ -161,13 +244,8 @@ std::future<std::vector<FatPtr>>
 gcpp::CopyingCollector<LockPolicy>::async_collect(
     const std::vector<FatPtr*>& roots) noexcept
 {
-    const uint8_t to_space = [this]() {
-        auto lk = m_lock.lock();
-        m_space_num = other_space_num(m_space_num);
-        (void)lk;
-        return load(m_space_num);
-    }();
-    m_next = 0;
+    const auto [from_space, to_space] = flip_space(m_space_num);
+    m_nexts[static_cast<uint8_t>(from_space)] = 0;
     return m_lock.do_collection([this, roots, to_space]() {
         std::vector<FatPtr> promoted;
         std::unordered_map<FatPtr, FatPtr> visited;
@@ -176,7 +254,6 @@ gcpp::CopyingCollector<LockPolicy>::async_collect(
                         })) {
             forward_ptr(to_space, *it, visited);
         }
-        // TODO promotions
         return promoted;
     });
 }
@@ -191,6 +268,13 @@ void gcpp::CopyingCollector<Lock>::collect() noexcept
     std::vector<FatPtr*> roots;
     GC_GET_ROOTS(roots);
     m_collect_result = async_collect(roots);
+}
+
+template <gcpp::CollectorLockingPolicy Lock>
+FatPtr gcpp::CopyingCollector<Lock>::alloc(size_t size,
+                                           std::align_val_t alignment)
+{
+    return alloc_attempt(size, alignment, 0);
 }
 
 template class gcpp::CopyingCollector<gcpp::SerialGCPolicy>;

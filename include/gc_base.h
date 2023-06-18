@@ -1,7 +1,9 @@
 #pragma once
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <type_traits>
 
 using ptr_t = void*;
@@ -113,6 +115,13 @@ struct FatPtr {
         return reinterpret_cast<std::byte*>(get_gc_ptr().ptr);
     }
 
+    /**
+     * @brief Atomically updates the current pointer to point do `other`.
+     * Reading of `other` and updating of `m_ptr` do not necessarily happen in
+     * one atomic instructions, however each one is atomic.
+     *
+     * @param other
+     */
     inline void atomic_update(FatPtr other) noexcept
     {
         assert((reinterpret_cast<uintptr_t>(&m_ptr) &
@@ -126,10 +135,46 @@ struct FatPtr {
             and contain a lock. Since we have other x86 assembly inlined, I'll
            try this first.
         */
-        asm("mov %1, %%rcx\n"
-            "mov %%rcx, %0"
-            : "=r"(m_ptr)
-            : "r"(other.m_ptr));
+        asm("movq %1, %%rcx\n"
+            "movq %%rcx, %0"
+            : "=m"(m_ptr)
+            : "rm"(other.m_ptr)
+            : "rcx", "memory");
+    }
+
+    /**
+     * @brief Atomically compares the current pointer to `expected` and if they
+     * are equal, updates the current pointer to `desired`. Otherwise, returns
+     * the current pointer.
+     *
+     * @param expected the expected value of the pointer
+     * @param desired the value to update the pointer to if it is equal to
+     * `expected`
+     * @return nullopt if the pointer was updated, otherwise the current value
+     * of the pointer
+     */
+    inline std::optional<FatPtr> compare_exchange(const FatPtr& expected,
+                                                  FatPtr desired)
+    {
+        // lock cmpxchg cannot fail supriously
+        volatile bool success = false;
+        volatile uintptr_t new_ptr = 0;
+        asm("movq %3, %%rax\n"
+            "movq %4, %%rcx\n"
+            "lock cmpxchgq %%rcx, %0\n"
+            "setz %1\n"
+            "movq %%rax, %2"
+            // outputs
+            : "=m"(m_ptr), "=r"(success), "=rm"(new_ptr)
+            // inputs
+            : "rm"(expected.m_ptr), "rm"(desired.m_ptr)
+            // clobbers: things we overwrite ("clobber")
+            : "rax", "rcx", "memory");
+        if (success) {
+            return std::nullopt;
+        } else {
+            return std::make_optional(FatPtr{new_ptr});
+        }
     }
 };
 // must be trivially copyable to memcpy it
