@@ -1,7 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <queue>
+#include <shared_mutex>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "gc_base.h"
@@ -16,11 +20,32 @@ class GCRoots
 {
   private:
     /** Pointer to addresses of global roots */
-    std::vector<uintptr_t> m_global_roots;
+    const std::vector<uintptr_t> m_global_roots;
     /** Pointer to stack location of all local roots */
-    std::vector<uintptr_t> m_local_roots;
+    std::unordered_map<std::thread::id, std::vector<uintptr_t>> m_local_roots;
+    /**
+     * @brief Set of the currently scanned stack range for each thread. Each
+     * pair is the earliest (numerically greatest) stack start and the latest
+     * (numerically smallest) stack end. (start, end)
+     */
+    std::unordered_map<std::thread::id, std::pair<uintptr_t, uintptr_t>>
+        m_scanned_ranges;
+    /** Set of the largest stack range for each thread. Each pair is the
+     * earliest (numerically greatest) stack start and the latest (numerically
+     * smallest) stack end. (start, end)
+     */
+    std::unordered_map<std::thread::id, std::pair<uintptr_t, uintptr_t>>
+        m_stack_ranges;
     // NOLINTNEXTLINE(cppcoreguidelines-*)
-    inline static thread_local std::unique_ptr<GCRoots> g_instance;
+    inline static std::unique_ptr<GCRoots> g_instance;
+    /** Mutex for creation of g_instance */
+    inline static std::once_flag g_instance_flag;
+    /**
+     * Mutex for access to local_roots, scanned_ranges, and stack_ranges.
+     * Exclusive ownership is needed for adding a new thread entry or adding new
+     * local roots to a thread entry. Shared onwership for everything else.
+     */
+    std::shared_mutex m_mutex;
     GCRoots() noexcept;
 
   public:
@@ -34,6 +59,36 @@ class GCRoots
      * @return std::vector<ptr_t>
      */
     std::vector<FatPtr*> get_roots(uintptr_t base_ptr);
+
+    /**
+     * @brief Updates the min and max stack range for the current thread.
+     * Should be called on a new allocation.
+     *
+     * @param base_ptr
+     */
+    void update_stack_range(uintptr_t base_ptr);
+
+  private:
+    /**
+     * @brief Scans the stack of the given thread for for local roots.
+     * Scans the difference between `m_scanned_ranges` and `m_stack_ranges` for
+     * `id`.
+     * Requires unique lock on `m_mutex`
+     * Requires an entry in `m_scanned_ranges` and `m_stack_ranges` for `id`
+     *
+     * @param local_roots [in/out] std::vector<ptr_t> to store the local roots
+     */
+    void scan_locals(std::vector<uintptr_t>& local_roots, std::thread::id id);
+
+    /**
+     * @brief Removes local roots that are no longer live from a thead's
+     * `m_local_roots` entry. Determines local roots based on the thread's
+     * `m_stack_ranges` entry.
+     * Requires a shared or unique lock on `m_mutex`
+     *
+     * @param id
+     */
+    void remove_dead_locals(std::thread::id id);
 };
 
 /**

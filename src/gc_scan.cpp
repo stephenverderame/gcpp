@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <concepts>
+#include <cstdint>
 #include <fstream>
+#include <mutex>
+#include <thread>
 #include <type_traits>
 #include <unordered_set>
 
@@ -23,9 +26,16 @@ auto get_proc_name()
     }
     return proc_name;
 }
-}  // namespace
+/** Gets the current stack pointer */
+inline auto get_sp()
+{
+    volatile uintptr_t stack_ptr = 0;
+    // move rsp into stack_ptr, AT&T syntax
+    asm("mov %%rsp, %0 \n" : "=r"(stack_ptr));
+    return stack_ptr;
+}
 
-gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
+auto scan_globals() noexcept
 {
     // scans the "data segment" for all possible global GC ptrs
     const auto proc_name = get_proc_name();
@@ -33,6 +43,7 @@ gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
     // <start_addr>-<end_addr> <access> <other_stuff>           <process_name>
     std::ifstream proc("/proc/self/maps");
     std::string line;
+    std::vector<uintptr_t> vals;
     while (std::getline(proc, line)) {
         if (line.find(proc_name) != std::string::npos) {
             // section is not a library the executable is linked with or
@@ -48,18 +59,24 @@ gcpp::GCRoots::GCRoots() noexcept : m_global_roots(), m_local_roots()
                     addr_midpt + 1, line.find(' ') - addr_midpt - 1);
                 const auto data_start = std::stoull(addr_start, nullptr, 16);
                 const auto data_end = std::stoull(addr_end, nullptr, 16);
-                scan_memory(data_start, data_end, [this](auto val) {
-                    m_global_roots.push_back(reinterpret_cast<uintptr_t>(val));
+                scan_memory(data_start, data_end, [&vals](auto val) {
+                    vals.push_back(reinterpret_cast<uintptr_t>(val));
                 });
             }
         }
     }
+    return vals;
 }
+}  // namespace
+
+gcpp::GCRoots::GCRoots() noexcept : m_global_roots(scan_globals()) {}
 
 gcpp::GCRoots& gcpp::GCRoots::get_instance()
 {
     if (g_instance == nullptr) {
-        g_instance = std::unique_ptr<GCRoots>(new GCRoots());
+        std::call_once(g_instance_flag, []() {
+            g_instance = std::unique_ptr<GCRoots>(new GCRoots());
+        });
     }
     return *g_instance;
 }
@@ -101,33 +118,110 @@ auto recheck_locals(std::vector<uintptr_t>::iterator heap_begin,
     return heap_end;
 }
 
-std::vector<FatPtr*> gcpp::GCRoots::get_roots(uintptr_t base_ptr)
+void gcpp::GCRoots::remove_dead_locals(std::thread::id id)
 {
-    uintptr_t stack_ptr = 0;
-    // move rsp into stack_ptr, AT&T syntax
-    asm("mov %%rsp, %0 \n" : "=r"(stack_ptr));
-    const auto heap_begin = m_local_roots.begin();
-    auto heap_end = m_local_roots.end();
-    heap_end = recheck_locals(heap_begin, heap_end, stack_ptr);
+    auto& local_roots = m_local_roots[id];
+    const auto thread_sp = m_stack_ranges[id].second;
+    const auto heap_begin = local_roots.begin();
+    auto heap_end = local_roots.end();
+    heap_end = recheck_locals(heap_begin, heap_end, thread_sp);
 
     // noexcept bc we are reducing size
-    m_local_roots.resize(
+    local_roots.resize(
         static_cast<size_t>(std::distance(heap_begin, heap_end)));
+}
 
-    // add new locals, noexcept
-    // + 1 bc base_ptr is inclusive
-    scan_memory(stack_ptr - red_zone_size, base_ptr + 1, [this](auto ptr) {
-        m_local_roots.push_back(reinterpret_cast<uintptr_t>(ptr));
-        std::push_heap(m_local_roots.begin(), m_local_roots.end(),
+void gcpp::GCRoots::scan_locals(std::vector<uintptr_t>& local_roots,
+                                std::thread::id id)
+{
+    auto& [scanned_start, scanned_end] = m_scanned_ranges.at(id);
+    const auto [stack_start, stack_end] = m_stack_ranges.at(id);
+    const auto scan_callback = [&local_roots](auto ptr) {
+        local_roots.push_back(reinterpret_cast<uintptr_t>(ptr));
+        std::push_heap(local_roots.begin(), local_roots.end(),
                        std::greater<>());
-    });
+    };
+    if (scanned_start == 0 && scanned_end == 0) {
+        // nothing scanned yet
+        scan_memory(stack_end - red_zone_size, stack_start + 1, scan_callback);
+    } else {
+        if (stack_start > scanned_start) {
+            // stack_start -- larger
+            // ...
+            // scanned_start -- smaller
+            scan_memory(scanned_start - sizeof(FatPtr), stack_start + 1,
+                        scan_callback);
+        }
+        if (stack_end < scanned_end) {
+            // scanned_end -- larger
+            // ...
+            // stack_end -- smaller
+            scan_memory(stack_end - red_zone_size, scanned_end + 1,
+                        scan_callback);
+        }
+    }
+    scanned_start = std::max(scanned_start, stack_start);
+    scanned_end = stack_end;
+}
+
+std::vector<FatPtr*> gcpp::GCRoots::get_roots(uintptr_t base_ptr)
+{
+    update_stack_range(base_ptr);
+    auto lk = std::unique_lock{m_mutex};
+
+    size_t total_local_roots = 0;
+    for (auto& roots : m_local_roots) {
+        remove_dead_locals(roots.first);
+        scan_locals(roots.second, roots.first);
+        total_local_roots += roots.second.size();
+    }
+    lk.unlock();
     auto res = std::vector<FatPtr*>();
-    res.reserve(m_global_roots.size() + m_local_roots.size());
+    res.reserve(m_global_roots.size() + total_local_roots);
     for (auto val : m_global_roots) {
         res.push_back(reinterpret_cast<FatPtr*>(val));
     }
-    for (auto val : m_local_roots) {
-        res.push_back(reinterpret_cast<FatPtr*>(val));
+    auto reader_lk = std::shared_lock{m_mutex};
+    for (const auto& vals : m_local_roots) {
+        for (auto ptr : vals.second) {
+            res.push_back(reinterpret_cast<FatPtr*>(ptr));
+        }
     }
     return res;
+}
+
+void gcpp::GCRoots::update_stack_range(uintptr_t base_ptr)
+{
+    auto sp = get_sp();
+    auto lk = std::shared_lock{m_mutex};
+    bool existing_record = false;
+    if (m_stack_ranges.contains(std::this_thread::get_id())) {
+        const auto [stack_start, stack_end] =
+            m_stack_ranges.at(std::this_thread::get_id());
+        if (base_ptr <= stack_start && sp == stack_end) {
+            // stack_start -- biggest
+            // ...
+            // base_ptr
+            // ...
+            // sp
+            // ...
+            // stack_end  -- smallest
+            return;
+        }
+        existing_record = true;
+    }
+    if (existing_record) {
+        auto& [stack_start, stack_end] =
+            m_stack_ranges.at(std::this_thread::get_id());
+        stack_start = std::max(stack_start, base_ptr);
+        stack_end = sp;
+    } else {
+        lk.unlock();
+        // gap in locks is safe because each thread has its own entry
+        auto writer_lk = std::unique_lock{m_mutex};
+        m_stack_ranges.insert(
+            {std::this_thread::get_id(), std::make_pair(base_ptr, sp)});
+        m_scanned_ranges.insert(
+            {std::this_thread::get_id(), std::make_pair(0, 0)});
+    }
 }
