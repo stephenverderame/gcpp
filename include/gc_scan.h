@@ -1,5 +1,7 @@
 #pragma once
 
+#include <sys/types.h>
+
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -100,9 +102,21 @@ class GCRoots
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define GC_GET_ROOTS(out_vec)                                          \
     {                                                                  \
-        uintptr_t base_ptr;                                            \
+        volatile uintptr_t base_ptr;                                   \
         /* move rbp into `base_ptr`, AT&T syntax */                    \
         asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                      \
         (out_vec) = gcpp::GCRoots::get_instance().get_roots(base_ptr); \
+    }
+/**
+ * @def GC_UPDATE_STACK_RANGE()
+ * @brief Updates the stack range for the current thread
+ *
+ */
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define GC_UPDATE_STACK_RANGE()                                     \
+    {                                                               \
+        volatile uintptr_t base_ptr;                                \
+        asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                   \
+        gcpp::GCRoots::get_instance().update_stack_range(base_ptr); \
     }
 }  // namespace gcpp

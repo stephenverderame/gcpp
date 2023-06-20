@@ -41,6 +41,7 @@ TEST(ScanTest, LocalsTest)
     auto not_ptr2 = 0xDEADBEEF;
     auto ptr = FatPtr{0x5000};
     const auto ptr2 = FatPtr{0x6000};
+    GC_UPDATE_STACK_RANGE();
     std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, UnorderedElementsAre(0x1000, 0x2000, 0x5000, 0x6000));
@@ -53,6 +54,7 @@ __attribute__((noinline)) void foo()
 {
     auto ptr = FatPtr{0x7000};
     const auto ptr2 = FatPtr{0x8000};
+    GC_UPDATE_STACK_RANGE();
     std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, UnorderedElementsAre(0x1000, 0x2000, 0x7000, 0x8000));
@@ -64,6 +66,7 @@ __attribute__((noinline)) void bar()
 {
     auto ptr = FatPtr{0x700};
     const auto ptr2 = FatPtr{0x800};
+    GC_UPDATE_STACK_RANGE();
     std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf({0x1000, 0x2000, 0x700, 0x800}));
@@ -75,6 +78,7 @@ TEST(ScanTest, NestedLocals)
 {
     foo();
     bar();
+    GC_UPDATE_STACK_RANGE();
     std::vector<uintptr_t> roots;
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf({0x1000, 0x2000}));
@@ -88,6 +92,7 @@ void rec_left(uintptr_t i, uintptr_t max_size)
     auto ptr = FatPtr{(i * 0x10000)};
     std::vector<uintptr_t> roots;
     std::vector<uintptr_t> expected_roots;
+    GC_UPDATE_STACK_RANGE();
     GC_GET_ROOT_VALS(roots);
     expected_roots.push_back(0x1000);
     expected_roots.push_back(0x2000);
@@ -112,6 +117,7 @@ void rec_right(uintptr_t i, uintptr_t max_size)
     const std::array<uintptr_t, 3> expected_roots = {0x1000, 0x2000,
                                                      i * 0x100000};
     rec_right(i + 1, max_size);
+    GC_UPDATE_STACK_RANGE();
     GC_GET_ROOT_VALS(roots);
     ASSERT_THAT(roots, IsSupersetOf(expected_roots));
     // about 48 bytes per function, 128 byte redzone

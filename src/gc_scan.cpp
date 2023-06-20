@@ -134,14 +134,14 @@ void gcpp::GCRoots::remove_dead_locals(std::thread::id id)
 void gcpp::GCRoots::scan_locals(std::vector<uintptr_t>& local_roots,
                                 std::thread::id id)
 {
-    auto& [scanned_start, scanned_end] = m_scanned_ranges.at(id);
+    // auto& [scanned_start, scanned_end] = m_scanned_ranges.at(id);
     const auto [stack_start, stack_end] = m_stack_ranges.at(id);
     const auto scan_callback = [&local_roots](auto ptr) {
         local_roots.push_back(reinterpret_cast<uintptr_t>(ptr));
         std::push_heap(local_roots.begin(), local_roots.end(),
                        std::greater<>());
     };
-    if (scanned_start == 0 && scanned_end == 0) {
+    /*if (scanned_start == 0 && scanned_end == 0) {
         // nothing scanned yet
         scan_memory(stack_end - red_zone_size, stack_start + 1, scan_callback);
     } else {
@@ -161,7 +161,9 @@ void gcpp::GCRoots::scan_locals(std::vector<uintptr_t>& local_roots,
         }
     }
     scanned_start = std::max(scanned_start, stack_start);
-    scanned_end = stack_end;
+    scanned_end = stack_end;*/
+    local_roots.clear();
+    scan_memory(stack_end - red_zone_size, stack_start + 1, scan_callback);
 }
 
 std::vector<FatPtr*> gcpp::GCRoots::get_roots(uintptr_t base_ptr)
@@ -223,5 +225,6 @@ void gcpp::GCRoots::update_stack_range(uintptr_t base_ptr)
             {std::this_thread::get_id(), std::make_pair(base_ptr, sp)});
         m_scanned_ranges.insert(
             {std::this_thread::get_id(), std::make_pair(0, 0)});
+        m_local_roots.insert({std::this_thread::get_id(), {}});
     }
 }
