@@ -6,7 +6,7 @@
 using collector_t = gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
 constexpr uintptr_t heap_size = 51200;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static thread_local collector_t g_collector(heap_size);
+static collector_t g_collector(heap_size);
 
 FatPtr gcpp::alloc(size_t size, std::align_val_t alignment)
 {

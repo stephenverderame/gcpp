@@ -2,6 +2,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <stop_token>
+
 #include "gc_base.h"
 #include "gmock/gmock.h"
 using testing::IsSupersetOf;
@@ -141,4 +143,32 @@ TEST(FatPtrTest, AtomicOps)
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res.value_or(FatPtr{0x0}), ptr3);
     ASSERT_EQ(ptr, ptr3);
+}
+
+TEST(ScanTest, MTScan)
+{
+    std::atomic<uint8_t> count = 0;
+    std::jthread t1([&](std::stop_token st) {
+        FatPtr ptr{0x1022};
+        GC_UPDATE_STACK_RANGE();
+        count += 1;
+        while (!st.stop_requested()) {
+        }
+    });
+
+    std::jthread t2([&count](std::stop_token st) {
+        FatPtr ptr{0x1011};
+        GC_UPDATE_STACK_RANGE();
+        count += 1;
+        while (!st.stop_requested()) {
+        }
+    });
+
+    while (count < 2) {
+    }
+
+    GC_UPDATE_STACK_RANGE();
+    std::vector<uintptr_t> roots;
+    GC_GET_ROOT_VALS(roots);
+    ASSERT_THAT(roots, IsSupersetOf({0x1000, 0x1011, 0x1022}));
 }
