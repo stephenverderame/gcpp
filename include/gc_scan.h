@@ -23,15 +23,6 @@ class GCRoots
   private:
     /** Pointer to addresses of global roots */
     const std::vector<uintptr_t> m_global_roots;
-    /** Pointer to stack location of all local roots */
-    std::unordered_map<std::thread::id, std::vector<uintptr_t>> m_local_roots;
-    /**
-     * @brief Set of the currently scanned stack range for each thread. Each
-     * pair is the earliest (numerically greatest) stack start and the latest
-     * (numerically smallest) stack end. (start, end)
-     */
-    std::unordered_map<std::thread::id, std::pair<uintptr_t, uintptr_t>>
-        m_scanned_ranges;
     /** Set of the largest stack range for each thread. Each pair is the
      * earliest (numerically greatest) stack start and the latest (numerically
      * smallest) stack end. (start, end)
@@ -78,19 +69,8 @@ class GCRoots
      * Requires unique lock on `m_mutex`
      * Requires an entry in `m_scanned_ranges` and `m_stack_ranges` for `id`
      *
-     * @param local_roots [in/out] std::vector<ptr_t> to store the local roots
      */
-    void scan_locals(std::vector<uintptr_t>& local_roots, std::thread::id id);
-
-    /**
-     * @brief Removes local roots that are no longer live from a thead's
-     * `m_local_roots` entry. Determines local roots based on the thread's
-     * `m_stack_ranges` entry.
-     * Requires a shared or unique lock on `m_mutex`
-     *
-     * @param id
-     */
-    void remove_dead_locals(std::thread::id id);
+    std::vector<uintptr_t> scan_locals(std::thread::id id);
 };
 
 /**
