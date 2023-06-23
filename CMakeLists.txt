@@ -39,10 +39,14 @@ set(COMPILE_FLAGS
     "-Wconversion"
     "-Wnarrowing")
 
+set(LINK_SETTINGS "")
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     message("Debug build")
     list(APPEND COMPILE_FLAGS "-O0")
     list(APPEND COMPILE_FLAGS "-gdwarf-5")
+    # list(APPEND COMPILE_FLAGS "-fsanitize=thread")
+    # list(APPEND LINK_SETTINGS "-fsanitize=thread")
 endif ()
 
 add_subdirectory ("src")

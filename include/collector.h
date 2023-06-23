@@ -82,7 +82,7 @@ concept CollectorLockingPolicy = requires(T t) {
     typename T::gc_uint8_t;
 
     {
-        t.do_concurrent(std::declval<std::function<int()>>)
+        t.do_with_lock(std::declval<std::function<int()>>)
     };
 
     {

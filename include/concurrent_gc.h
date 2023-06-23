@@ -24,7 +24,7 @@ class ConcurrentGCPolicy
 
     template <typename T>
     requires std::invocable<T>
-    auto do_concurrent(T fn)
+    auto do_with_lock(T fn)
     {
         lock();
         return fn();
@@ -52,7 +52,7 @@ class SerialGCPolicy
 
     template <typename T>
     requires std::invocable<T>
-    auto do_concurrent(T fn)
+    auto do_with_lock(T fn)
     {
         return fn();
     }

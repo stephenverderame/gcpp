@@ -30,7 +30,7 @@ class CopyingCollector
     std::unordered_map<FatPtr, MetaData> m_metadata;
     /** Maximum amount of data we can externally allocate */
     size_t m_max_alloc_size;
-    std::future<CollectionResultT> m_collect_result;
+    std::shared_future<CollectionResultT> m_collect_result;
     LockPolicy m_lock;
 
   public:
@@ -54,7 +54,7 @@ class CopyingCollector
                                    1});
 
     std::future<std::vector<FatPtr>> async_collect(
-        const std::vector<FatPtr*>& roots) noexcept;
+        const std::vector<FatPtr*>& extra_roots) noexcept;
 
     [[nodiscard]] bool contains(void* ptr) const noexcept;
 
@@ -65,8 +65,13 @@ class CopyingCollector
      * @brief Dispatches an async collection task
      * Waits for the current collection to finish before starting a new one
      * if one is already in progress
+     *
+     * @param needed_space amount of space needed to be free. Avoids collection
+     * if there is already enough space. Any sufficiently large value will
+     * always trigger a collection
      */
-    void collect() noexcept;
+    void collect(
+        size_t needed_space = std::numeric_limits<size_t>::max()) noexcept;
 
   private:
     /**
@@ -76,7 +81,7 @@ class CopyingCollector
      * @param ptr pointer to object to copy
      * @return FatPtr pointer to the copy of the object
      */
-    [[nodiscard]] FatPtr copy(SpaceNum to_space, const FatPtr& ptr) noexcept;
+    [[nodiscard]] FatPtr copy(SpaceNum to_space, const FatPtr& ptr);
 
     /**
      * @brief Forwards a pointer to the other space
@@ -135,8 +140,9 @@ class CopyingCollector
      * @return size_t index of the start of the reserved space (past the
      * padding)
      */
-    [[nodiscard]] size_t reserve_space(size_t size, SpaceNum to_space,
-                                       std::align_val_t alignment);
+    [[nodiscard]] std::optional<size_t> reserve_space(
+        size_t size, SpaceNum to_space, std::align_val_t alignment,
+        size_t max_alloc_size);
 };
 
 static_assert(Collector<CopyingCollector<SerialGCPolicy>>);

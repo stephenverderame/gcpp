@@ -15,11 +15,9 @@ void gcpp::Task<R>::do_work(std::stop_token stop_token)
                 return;
             }
         }
-        auto& task = m_tasks.front();
+        auto task = std::move(m_tasks.front());
         lk.unlock();
-        printf("Collecting\n");
         task();
-        printf("Collected\n");
         lk.lock();
         m_tasks.pop();
     }

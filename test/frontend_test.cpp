@@ -18,6 +18,17 @@ TEST(SafePtr, Basic)
     *ptr = 10;
     ASSERT_EQ(*ptr, 10);
     ASSERT_LT(ptr, gcpp::SafePtr<int>(0));
+    auto ptr2 = ptr.clone();
+    ASSERT_EQ(*ptr2, *ptr);
+    *ptr2 = -10;
+    ASSERT_EQ(*ptr2, -10);
+    ASSERT_EQ(*ptr, 10);
+
+    auto ptr3 = ptr;
+    ASSERT_EQ(*ptr3, 10);
+    *ptr3 = 20;
+    ASSERT_EQ(*ptr3, 20);
+    ASSERT_EQ(*ptr, 20);
 }
 
 struct LinkedList {
