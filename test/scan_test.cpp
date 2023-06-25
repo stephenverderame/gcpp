@@ -134,6 +134,10 @@ TEST(FatPtrTest, AtomicOps)
     FatPtr ptr2{0x2000};
     FatPtr ptr3{0x3000};
     FatPtr ptr4{0x4000};
+    struct {
+        uintptr_t a = 0;
+        uintptr_t b = 0;
+    } dummy_ptr;
     ptr.atomic_update(ptr2);
     ASSERT_EQ(ptr, ptr2);
     auto res = ptr.compare_exchange(ptr2, ptr3);
@@ -143,6 +147,11 @@ TEST(FatPtrTest, AtomicOps)
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res.value_or(FatPtr{0x0}), ptr3);
     ASSERT_EQ(ptr, ptr3);
+    ASSERT_EQ(ptr.atomic_load() & ptr_mask,
+              reinterpret_cast<uintptr_t>(ptr3.as_ptr()));
+    ASSERT_EQ(ptr.atomic_load() & ptr_tag_mask, ptr_tag);
+    ASSERT_TRUE(FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(&ptr4)));
+    ASSERT_FALSE(FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(&dummy_ptr)));
 }
 
 TEST(ScanTest, MTScan)

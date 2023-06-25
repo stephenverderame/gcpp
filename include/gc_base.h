@@ -79,25 +79,25 @@ struct FatPtr {
     mutable uintptr_t m_ptr;
     friend struct std::hash<FatPtr>;
 
-  private:
+  public:
     __attribute__((no_sanitize("thread"))) auto atomic_load() const
     {
-        // volatile uintptr_t read_ptr = 0;
-        // const auto ptr_addr = &m_ptr;
-        // asm("xor %%rax, %%rax\n"
-        //     "movq %1, %%rcx\n"
-        //     "lock xadd %%rax, (%%rcx)\n"
-        //     "mov %%rax, %0"
-        //     : "=rm"(read_ptr)
-        //     : "rm"(ptr_addr)
-        //     : "rax", "rcx", "memory");
-        // assert((read_ptr & ptr_tag_mask) == ptr_tag);
-        // return read_ptr;
-        assert((m_ptr & ptr_tag_mask) == ptr_tag);
-        return m_ptr;
+        volatile uintptr_t read_ptr = 0;
+        const auto ptr_addr = &m_ptr;
+        asm("xor %%rax, %%rax\n"
+            "movq %1, %%rcx\n"
+            "lock xadd %%rax, (%%rcx)\n"
+            "mov %%rax, %0"
+            : "=rm"(read_ptr)
+            : "rm"(ptr_addr)
+            : "rax", "rcx", "memory");
+        if ((read_ptr & ptr_tag_mask) != ptr_tag) {
+            throw std::runtime_error("Invalid pointer");
+        }
+        return read_ptr;
+        // assert((m_ptr & ptr_tag_mask) == ptr_tag);
+        // return m_ptr;
     }
-
-  public:
     /**
      * @brief Construct a new Fat Ptr object
      *
@@ -146,7 +146,8 @@ struct FatPtr {
         // }
         // return read_header == ptr_header() &&
         //        (read_ptr & ptr_tag_mask) == ptr_tag;
-        return *ptr == ptr_header();
+        asm("mfence" ::: "memory");
+        return *ptr == ptr_header() && (*(ptr + 1) & ptr_tag_mask) == ptr_tag;
         // only check the header since that is never modified
         (void)read_only;
     }
@@ -227,6 +228,23 @@ struct FatPtr {
         } else {
             return std::make_optional(FatPtr{new_ptr});
         }
+    }
+
+    /**
+     * @brief Tests if the given pointer is still a GC pointer, and if so
+     * returns a copy
+     *
+     * @param ptr
+     * @return std::optional<FatPtr>
+     */
+    static std::optional<FatPtr> test_ptr(const FatPtr* ptr)
+    {
+        asm("mfence" ::: "memory");
+        auto val = *ptr;
+        if (FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(&val))) {
+            return val;
+        }
+        return {};
     }
 };
 // must be trivially copyable to memcpy it

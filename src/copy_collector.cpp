@@ -223,6 +223,7 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
     // ISSUE: ptr object data could be updated during the memcpy
     {
         auto mem_lock = region_readonly(ptr, old_data.size);
+        asm("mfence" ::: "memory");
         memcpy(new_obj, ptr, old_data.size);
     }
     auto lk = m_lock.lock();
@@ -238,8 +239,12 @@ void gcpp::CopyingCollector<L>::forward_ptr(
     stack.emplace(ptr);
     while (!stack.empty()) {
         auto p = stack.top();
-        auto ptr_val = p.get();
+        auto maybe_ptr_val = FatPtr::test_ptr(&p.get());
         stack.pop();
+        if (!maybe_ptr_val) {
+            continue;
+        }
+        auto ptr_val = maybe_ptr_val.value();
         if (visited.contains(ptr_val)) {
             p.get().compare_exchange(ptr_val, visited.at(ptr_val));
             continue;
@@ -278,7 +283,8 @@ gcpp::CopyingCollector<LockPolicy>::async_collect(
         GC_GET_ROOTS(roots);
         roots.insert(roots.end(), extra_roots.begin(), extra_roots.end());
         for (auto* it : roots | std::views::filter([this](auto ptr) {
-                            return contains(ptr->as_ptr());
+                            const auto opt = FatPtr::test_ptr(ptr);
+                            return opt && contains(opt.value());
                         })) {
             forward_ptr(to_space, *it, visited);
         }
