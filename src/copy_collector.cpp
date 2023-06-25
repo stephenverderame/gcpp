@@ -1,5 +1,8 @@
 #include "copy_collector.h"
 
+#include <bits/types/siginfo_t.h>
+#include <sys/mman.h>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdlib>
@@ -14,8 +17,10 @@
 
 #include "collector.h"
 #include "copy_collector.h"
+#include "debug_thread_counter.h"
 #include "gc_base.h"
 #include "gc_scan.h"
+#include "mem_prot.h"
 
 namespace
 {
@@ -165,9 +170,13 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
                                                 std::align_val_t alignment,
                                                 uint8_t attempts)
 {
-    const auto to_space = SpaceNum{load(m_space_num)};
-    const auto alloc_index =
-        reserve_space(size, to_space, alignment, m_max_alloc_size);
+    const auto [to_space, alloc_index] = [this, alignment, size]() {
+        auto lk = m_lock.lock();
+        const auto to = SpaceNum{load(m_space_num)};
+        return std::make_tuple(
+            to, reserve_space(size, to, alignment, m_max_alloc_size));
+        (void)lk;
+    }();
     if (!alloc_index) {
         if (attempts < 1) {
             collect(size);
@@ -210,9 +219,12 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
     if (!index) {
         throw std::bad_alloc();
     }
-    auto new_obj = alloc_no_constraints(to_space, old_data, *index);
-    // ISSUE: ptr could be updated during the memcpy
-    memcpy(new_obj, ptr, old_data.size);
+    auto new_obj = alloc_no_constraints(to_space, old_data, index.value());
+    // ISSUE: ptr object data could be updated during the memcpy
+    {
+        auto mem_lock = region_readonly(ptr, old_data.size);
+        memcpy(new_obj, ptr, old_data.size);
+    }
     auto lk = m_lock.lock();
     m_metadata.erase(ptr);
     (void)lk;
@@ -256,6 +268,7 @@ std::future<std::vector<FatPtr>>
 gcpp::CopyingCollector<LockPolicy>::async_collect(
     const std::vector<FatPtr*>& extra_roots) noexcept
 {
+    auto tc = ThreadCounter{m_tcount, 1};
     const auto [from_space, to_space] = flip_space(m_space_num);
     m_nexts[static_cast<uint8_t>(from_space)] = 0;
     return m_lock.do_collection([this, extra_roots, to_space]() {

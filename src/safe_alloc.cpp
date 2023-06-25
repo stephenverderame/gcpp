@@ -8,7 +8,7 @@ constexpr uintptr_t heap_size = 51200;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static collector_t g_collector(heap_size);
 
-FatPtr gcpp::alloc(size_t size, std::align_val_t alignment)
+FatPtr gcpp::GC::alloc(size_t size, std::align_val_t alignment)
 {
     if (g_collector.free_space() < size) {
         collect();
@@ -19,7 +19,7 @@ FatPtr gcpp::alloc(size_t size, std::align_val_t alignment)
     return g_collector.alloc(size, alignment);
 }
 
-void gcpp::collect()
+void gcpp::GC::collect() noexcept
 {
     GC_UPDATE_STACK_RANGE();
     g_collector.collect();

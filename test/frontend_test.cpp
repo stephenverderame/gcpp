@@ -60,7 +60,7 @@ int sum(const LinkedList& n)
 
 TEST(SafePtr, LinkedList)
 {
-    gcpp::collect();
+    gcpp::GC::collect();
     auto head = gcpp::make_safe<LinkedList>();
     ASSERT_EQ(
         reinterpret_cast<uintptr_t>(head.get()) & (alignof(LinkedList) - 1), 0);

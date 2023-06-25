@@ -13,6 +13,16 @@ constexpr uintptr_t ptr_size = sizeof(ptr_t);
 constexpr auto addr_space_size = static_cast<uintptr_t>(1)
                                  << (ptr_size - 1) * 8;
 
+#if defined(__x86_64__) && __x86_64__ || defined(_M_X64) && _M_X64
+#define REG_PREFIX "r"
+#define SIZE_SUFFIX "q"
+#elif defined(__i386__) || defined(_M_IX86)
+#define REG_PREFIX "e"
+#define SIZE_SUFFIX "l"
+#else
+#error "Unsupported architecture"
+#endif
+
 /**
  * We use a system of fat pointers to identify pointers.
  * Every GC pointer will have a header which is a word that comes right before
@@ -66,8 +76,26 @@ static_assert(std::is_standard_layout_v<GCPtr> &&
 struct FatPtr {
   private:
     uintptr_t m_header = ptr_header();
-    uintptr_t m_ptr;
+    mutable uintptr_t m_ptr;
     friend struct std::hash<FatPtr>;
+
+  private:
+    __attribute__((no_sanitize("thread"))) auto atomic_load() const
+    {
+        // volatile uintptr_t read_ptr = 0;
+        // const auto ptr_addr = &m_ptr;
+        // asm("xor %%rax, %%rax\n"
+        //     "movq %1, %%rcx\n"
+        //     "lock xadd %%rax, (%%rcx)\n"
+        //     "mov %%rax, %0"
+        //     : "=rm"(read_ptr)
+        //     : "rm"(ptr_addr)
+        //     : "rax", "rcx", "memory");
+        // assert((read_ptr & ptr_tag_mask) == ptr_tag);
+        // return read_ptr;
+        assert((m_ptr & ptr_tag_mask) == ptr_tag);
+        return m_ptr;
+    }
 
   public:
     /**
@@ -80,20 +108,47 @@ struct FatPtr {
     /**
      * @brief Get the gc ptr (without the tag)
      */
-    inline auto get_gc_ptr() const { return GCPtr{m_ptr & ptr_mask}; }
+    inline auto get_gc_ptr() const { return GCPtr{atomic_load() & ptr_mask}; }
 
     auto operator==(const FatPtr& other) const { return m_ptr == other.m_ptr; }
 
     /**
      * @brief Determines if a value may be a pointer.
-     * Requires `ptr` and `ptr + 1` are valid addresses.
+     * Requires `ptr` and `ptr + 1` are valid addresses and are aligned
+     * to `FatPtr`
      *
      * @param ptr
      * @return true if `ptr` may be a pointer
      */
-    inline static auto maybe_ptr(const uintptr_t* ptr)
+    __attribute__((no_sanitize("thread"))) inline static auto maybe_ptr(
+        // NOLINTNEXTLINE(readability-non-const-parameter)
+        uintptr_t* ptr, bool read_only = false)
     {
-        return *ptr == ptr_header() && (*(ptr + 1) & ptr_tag_mask) == ptr_tag;
+        // volatile uintptr_t read_header = 0;
+        // volatile uintptr_t read_ptr = 0;
+        // if (read_only) {
+        //     if ((reinterpret_cast<uintptr_t>(ptr) & 7) != 0) {
+        //         throw std::runtime_error("ptr not aligned");
+        //     }
+        //     read_header = *ptr;
+        //     read_ptr = *(ptr + 1);
+        // } else {
+        //     asm("xor %%rcx, %%rcx\n"
+        //         "xor %%rdx, %%rdx\n"
+        //         "movq %2, %%rax\n"
+        //         "lock xaddq %%rdx, (%%rax)\n"
+        //         "lock xaddq %%rcx, 8(%%rax)\n"
+        //         "movq %%rcx, %0\n"
+        //         "movq %%rdx, %1"
+        //         : "=r"(read_header), "=r"(read_ptr)
+        //         : "r"(ptr)
+        //         : "rax", "rcx", "rdx", "memory");
+        // }
+        // return read_header == ptr_header() &&
+        //        (read_ptr & ptr_tag_mask) == ptr_tag;
+        return *ptr == ptr_header();
+        // only check the header since that is never modified
+        (void)read_only;
     }
 
     // NOLINTNEXTLINE(google-explicit-constructor)
@@ -122,7 +177,8 @@ struct FatPtr {
      *
      * @param other
      */
-    inline void atomic_update(FatPtr other) noexcept
+    __attribute__((no_sanitize("thread"))) inline void atomic_update(
+        FatPtr other) noexcept
     {
         assert((reinterpret_cast<uintptr_t>(&m_ptr) &
                 (alignof(uintptr_t) - 1)) == 0);
@@ -135,11 +191,7 @@ struct FatPtr {
             and contain a lock. Since we have other x86 assembly inlined, I'll
            try this first.
         */
-        asm("movq %1, %%rcx\n"
-            "movq %%rcx, %0"
-            : "=m"(m_ptr)
-            : "rm"(other.m_ptr)
-            : "rcx", "memory");
+        asm("lock xchgq %1, %0" : "=m"(m_ptr) : "r"(other.m_ptr) : "memory");
     }
 
     /**
@@ -153,8 +205,8 @@ struct FatPtr {
      * @return nullopt if the pointer was updated, otherwise the current value
      * of the pointer
      */
-    inline std::optional<FatPtr> compare_exchange(const FatPtr& expected,
-                                                  FatPtr desired)
+    __attribute__((no_sanitize("thread"))) inline std::optional<FatPtr>
+    compare_exchange(const FatPtr& expected, FatPtr desired)
     {
         // lock cmpxchg cannot fail supriously
         volatile bool success = false;
@@ -215,13 +267,14 @@ constexpr auto red_zone_size = 128;
  */
 template <typename Func>
 requires std::invocable<Func, FatPtr*>
-inline void scan_memory(uintptr_t begin, uintptr_t end, Func f) noexcept
+inline void scan_memory(uintptr_t begin, uintptr_t end, Func f,
+                        bool read_only = false) noexcept
 {
     const auto aligned_start = begin & gc_ptr_alignment_mask;
     begin = aligned_start == begin ? aligned_start
                                    : aligned_start + gc_ptr_alignment;
     for (auto ptr = begin; ptr + gc_ptr_size < end; ptr += gc_ptr_alignment) {
-        if (FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(ptr))) {
+        if (FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(ptr), read_only)) {
             f(reinterpret_cast<FatPtr*>(ptr));
         }
     }

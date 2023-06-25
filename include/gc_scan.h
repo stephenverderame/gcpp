@@ -99,4 +99,15 @@ class GCRoots
         asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                   \
         gcpp::GCRoots::get_instance().update_stack_range(base_ptr); \
     }
+/**
+ * @def GC_UPDATE_STACK_RANGE_NESTED_1()
+ * @brief Updates the stack range to include the caller of the current function
+ */
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define GC_UPDATE_STACK_RANGE_NESTED_1()                                   \
+    {                                                                      \
+        volatile uintptr_t caller_base_ptr;                                \
+        asm("mov (%%rbp), %0 \n" : "=r"(caller_base_ptr));                 \
+        gcpp::GCRoots::get_instance().update_stack_range(caller_base_ptr); \
+    }
 }  // namespace gcpp

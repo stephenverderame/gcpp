@@ -20,13 +20,13 @@ class ConcurrentGCPolicy
     Task<CollectionResultT> m_collect_task;
 
   public:
-    lock_t lock() noexcept { return std::unique_lock(m_mutex); }
+    [[nodiscard]] lock_t lock() noexcept { return std::unique_lock(m_mutex); }
 
     template <typename T>
     requires std::invocable<T>
     auto do_with_lock(T fn)
     {
-        lock();
+        auto lk = lock();
         return fn();
     }
 
@@ -48,7 +48,7 @@ class SerialGCPolicy
     using lock_t = int;
 
   public:
-    lock_t lock() noexcept { return 0; }
+    [[nodiscard]] lock_t lock() noexcept { return 0; }
 
     template <typename T>
     requires std::invocable<T>

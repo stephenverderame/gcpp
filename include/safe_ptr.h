@@ -6,6 +6,7 @@
 #include <optional>
 #include <type_traits>
 
+#include "gc_scan.h"
 #include "safe_alloc.h"
 namespace gcpp
 {
@@ -31,31 +32,24 @@ struct AlignmentOf<T, std::void_t<decltype(alignof(T))>> {
 };
 /** @} */
 
-template <typename T, std::align_val_t AlignmentVal, typename AllocFunc,
-          AllocFunc Alloc>
-requires std::is_invocable_v<AllocFunc, size_t, std::align_val_t>
+template <typename T, std::align_val_t AlignmentVal, GCFrontEnd GC>
 class SafePtrBase
 {
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator==(
-        std::nullptr_t,
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator!=(
-        std::nullptr_t,
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator==(
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&,
-        std::nullptr_t);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator!=(
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&,
-        std::nullptr_t);
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator==(std::nullptr_t,
+                           const SafePtrBase<U, AlignmentValF, GC2>&);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator!=(std::nullptr_t,
+                           const SafePtrBase<U, AlignmentValF, GC2>&);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator==(const SafePtrBase<U, AlignmentValF, GC2>&,
+                           std::nullptr_t);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator!=(const SafePtrBase<U, AlignmentValF, GC2>&,
+                           std::nullptr_t);
 
   private:
     FatPtr m_ptr;
@@ -63,8 +57,8 @@ class SafePtrBase
   public:
     template <typename... Args>
     explicit SafePtrBase(Args&&... args)
-        : m_ptr(reinterpret_cast<uintptr_t>(new(Alloc(sizeof(T), AlignmentVal))
-                                                T(std::forward<Args>(args)...)))
+        : m_ptr(reinterpret_cast<uintptr_t>(new(GC::alloc(
+              sizeof(T), AlignmentVal)) T(std::forward<Args>(args)...)))
     {
     }
 
@@ -72,8 +66,8 @@ class SafePtrBase
     static auto make(Args&&... args)
     {
         SafePtrBase res;
-        res.m_ptr = FatPtr{reinterpret_cast<uintptr_t>(new (
-            Alloc(sizeof(T), AlignmentVal)) T(std::forward<Args>(args)...))};
+        res.m_ptr = FatPtr{reinterpret_cast<uintptr_t>(new (GC::alloc(
+            sizeof(T), AlignmentVal)) T(std::forward<Args>(args)...))};
         return res;
     }
 
@@ -115,36 +109,29 @@ class SafePtrBase
     {
         SafePtrBase res;
         res.m_ptr = FatPtr{reinterpret_cast<uintptr_t>(
-            new (Alloc(sizeof(T), AlignmentVal)) T(*get()))};
+            new (GC::alloc(sizeof(T), AlignmentVal)) T(*get()))};
         return res;
     }
 };
 
-template <typename T, std::align_val_t AlignmentVal, typename AllocFunc,
-          AllocFunc Alloc>
-requires std::is_invocable_v<AllocFunc, size_t, std::align_val_t>
-class SafePtrBase<T[], AlignmentVal, AllocFunc, Alloc>
+template <typename T, std::align_val_t AlignmentVal, GCFrontEnd GC>
+class SafePtrBase<T[], AlignmentVal, GC>
 {
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator==(
-        std::nullptr_t,
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator!=(
-        std::nullptr_t,
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator==(
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&,
-        std::nullptr_t);
-    template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-              AllocFuncF AllocF>
-    friend bool operator!=(
-        const SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>&,
-        std::nullptr_t);
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator==(std::nullptr_t,
+                           const SafePtrBase<U, AlignmentValF, GC2>&);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator!=(std::nullptr_t,
+                           const SafePtrBase<U, AlignmentValF, GC2>&);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator==(const SafePtrBase<U, AlignmentValF, GC2>&,
+                           std::nullptr_t);
+
+    template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC2>
+    friend bool operator!=(const SafePtrBase<U, AlignmentValF, GC2>&,
+                           std::nullptr_t);
 
   private:
     FatPtr m_ptr;
@@ -153,9 +140,10 @@ class SafePtrBase<T[], AlignmentVal, AllocFunc, Alloc>
   public:
     explicit SafePtrBase(size_t size)
         : m_ptr(reinterpret_cast<uintptr_t>(
-              new(Alloc(sizeof(T) * size, AlignmentVal)) T[size])),
+              new(GC::alloc(sizeof(T) * size, AlignmentVal)) T[size])),
           m_size(size)
     {
+        GC_UPDATE_STACK_RANGE_NESTED_1();
     }
 
     static auto make(size_t size) { return SafePtrBase{size}; }
@@ -218,7 +206,7 @@ class SafePtrBase<T[], AlignmentVal, AllocFunc, Alloc>
     {
         SafePtrBase res;
         res.m_ptr = FatPtr{reinterpret_cast<uintptr_t>(
-            new (Alloc(sizeof(T) * m_size, AlignmentVal)) T[m_size])};
+            new (GC::alloc(sizeof(T) * m_size, AlignmentVal)) T[m_size])};
         res.m_size = m_size;
         for (size_t i = 0; i < m_size; ++i) {
             res[i] = (*this)[i];
@@ -228,44 +216,37 @@ class SafePtrBase<T[], AlignmentVal, AllocFunc, Alloc>
 };
 
 template <typename T, std::align_val_t AlignmentVal = AlignmentOf<T>::value,
-          typename AllocFunc = decltype(&alloc), AllocFunc Alloc = alloc>
-using SafePtr = SafePtrBase<T, AlignmentVal, AllocFunc, Alloc>;
+          GCFrontEnd GC = gcpp::GC>
+using SafePtr = SafePtrBase<T, AlignmentVal, GC>;
 
 template <typename T, typename... Args>
 auto make_safe(Args&&... args)
 {
+    GC_UPDATE_STACK_RANGE_NESTED_1();
     return SafePtr<T>::make(std::forward<Args>(args)...);
 }
 
-template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-          AllocFuncF AllocF>
-bool operator==(
-    std::nullptr_t,
-    const gcpp::SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>& ptr)
+template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC>
+bool operator==(std::nullptr_t,
+                const gcpp::SafePtrBase<U, AlignmentValF, GC>& ptr)
 {
     return FatPtr{} == ptr.m_ptr;
 }
-template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-          AllocFuncF AllocF>
-bool operator!=(
-    std::nullptr_t,
-    const gcpp::SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>& ptr)
+template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC>
+bool operator!=(std::nullptr_t,
+                const gcpp::SafePtrBase<U, AlignmentValF, GC>& ptr)
 {
     return FatPtr{} != ptr;
 }
-template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-          AllocFuncF AllocF>
-bool operator==(
-    const gcpp::SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>& ptr,
-    std::nullptr_t)
+template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC>
+bool operator==(const gcpp::SafePtrBase<U, AlignmentValF, GC>& ptr,
+                std::nullptr_t)
 {
     return FatPtr{} == ptr;
 }
-template <typename U, std::align_val_t AlignmentValF, typename AllocFuncF,
-          AllocFuncF AllocF>
-bool operator!=(
-    const gcpp::SafePtrBase<U, AlignmentValF, AllocFuncF, AllocF>& ptr,
-    std::nullptr_t)
+template <typename U, std::align_val_t AlignmentValF, GCFrontEnd GC>
+bool operator!=(const gcpp::SafePtrBase<U, AlignmentValF, GC>& ptr,
+                std::nullptr_t)
 {
     return FatPtr{} == ptr;
 }

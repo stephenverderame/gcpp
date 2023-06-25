@@ -59,9 +59,12 @@ auto scan_globals() noexcept
                     addr_midpt + 1, line.find(' ') - addr_midpt - 1);
                 const auto data_start = std::stoull(addr_start, nullptr, 16);
                 const auto data_end = std::stoull(addr_end, nullptr, 16);
-                scan_memory(data_start, data_end, [&vals](auto val) {
-                    vals.push_back(reinterpret_cast<uintptr_t>(val));
-                });
+                scan_memory(
+                    data_start, data_end,
+                    [&vals](auto val) {
+                        vals.push_back(reinterpret_cast<uintptr_t>(val));
+                    },
+                    true);
             }
         }
     }

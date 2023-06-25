@@ -9,6 +9,7 @@
 #include "collector.h"
 #include "concurrent_gc.h"
 #include "gc_base.h"
+#include "mem_prot.h"
 
 namespace gcpp
 {
@@ -16,7 +17,9 @@ enum class SpaceNum : uint8_t { Zero = 0, One = 1 };
 template <CollectorLockingPolicy LockPolicy>
 class CopyingCollector
 {
-    using MemStore = std::vector<std::byte, AlignedAllocator<std::byte>>;
+    using MemStore =
+        std::vector<std::byte,
+                    AlignedAllocator<std::byte, page_size_alignment>>;
 
   private:
     /** The two spaces of the heap */
@@ -31,7 +34,9 @@ class CopyingCollector
     /** Maximum amount of data we can externally allocate */
     size_t m_max_alloc_size;
     std::shared_future<CollectionResultT> m_collect_result;
-    LockPolicy m_lock;
+    mutable LockPolicy m_lock;
+    /** Debugging: thread count in async_collect */
+    std::atomic<size_t> m_tcount = 0;
 
   public:
     /**
@@ -40,13 +45,20 @@ class CopyingCollector
      * @{
      */
     explicit CopyingCollector(size_t size)
-        : m_spaces({MemStore(size), MemStore(size)}),
+        : m_spaces(
+              {MemStore(page_size_ceil(size)), MemStore(page_size_ceil(size))}),
           m_metadata(m_spaces[0].size() / 4),
           m_max_alloc_size(size / 2)
     {
         if (size >= ptr_mask) {
             throw std::runtime_error("Heap size too large");
         }
+        register_heap(m_spaces[0].data(), m_spaces[0].size());
+        register_heap(m_spaces[1].data(), m_spaces[1].size());
+        assert((reinterpret_cast<uintptr_t>(m_spaces[0].data()) &
+                ~static_cast<uintptr_t>(page_size() - 1)) !=
+               (reinterpret_cast<uintptr_t>(m_spaces[1].data()) &
+                ~static_cast<uintptr_t>(page_size() - 1)));
     }
 
     [[nodiscard]] FatPtr alloc(size_t size,

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gc_base.h"
+#include "mem_prot.h"
 namespace gcpp
 {
 using CollectionResultT = std::vector<FatPtr>;
@@ -109,7 +110,7 @@ struct MetaData {
  * @brief Heap allocator that aligns all allocations to a given alignment
  *
  * @tparam T type of element in the heap
- * @tparam Alignment alignment of the heap
+ * @tparam Alignment alignment of the heap or 0 to use the system page size
  */
 template <typename T,
           std::align_val_t Alignment =
@@ -136,8 +137,13 @@ struct AlignedAllocator {
 
     [[nodiscard]] T* allocate(std::size_t n)
     {
-        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-        return new (Alignment) T[n];
+        if constexpr (Alignment == std::align_val_t{0}) {
+            // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+            return new (page_size_align()) T[n];
+        } else {
+            // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+            return new (Alignment) T[n];
+        }
     }
 
     void deallocate(T* p, std::size_t) noexcept
@@ -146,4 +152,6 @@ struct AlignedAllocator {
         delete[] p;
     }
 };
+/** Special align_t value to indicate to align on page sizes */
+constexpr auto page_size_alignment = std::align_val_t{0};
 }  // namespace gcpp
