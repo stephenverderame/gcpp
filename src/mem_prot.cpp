@@ -18,8 +18,8 @@ std::atomic<int> g_heap_count = 0;
 
 void segfault_handler(int, siginfo_t* si, void*)
 {
-    const int heap_counds = g_heap_count;
-    for (int i = 0; i < heap_counds; ++i) {
+    const int heap_counts = g_heap_count;
+    for (int i = 0; i < heap_counts; ++i) {
         const auto& heap = g_heaps[static_cast<size_t>(i)];
         if (si->si_addr >= heap.first && si->si_addr < heap.second) {
             return;
@@ -158,4 +158,10 @@ gcpp::RegionProtection gcpp::region_readonly(void* start, size_t len)
 {
     return {start, static_cast<const uint8_t*>(start) + len,
             ProtectionMode::ReadOnly};
+}
+
+gcpp::RegionProtection gcpp::region_writeonly(void* start, size_t len)
+{
+    return {start, static_cast<const uint8_t*>(start) + len,
+            ProtectionMode::WriteOnly};
 }

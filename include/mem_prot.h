@@ -47,6 +47,7 @@ size_t page_size_ceil(size_t size);
  * Will lock all pages that contain the region.
  */
 [[nodiscard]] RegionProtection region_readonly(void* start, size_t len);
+[[nodiscard]] RegionProtection region_writeonly(void* start, size_t len);
 /** Gets the page size in bytes as `std::align_val_t` */
 std::align_val_t page_size_align();
 

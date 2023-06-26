@@ -50,7 +50,8 @@ TEST(MtTest, DataChanging)
             local_array[idx] = val;
         }
         for (size_t j = 0; j < array.size(); ++j) {
-            ASSERT_EQ(array[j], local_array[j]);
+            ASSERT_EQ(array[j], local_array[j])
+                << "For j = " << j << " and i = " << i;
         }
     }
 }
