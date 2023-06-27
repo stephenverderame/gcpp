@@ -253,7 +253,7 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
     auto new_obj = alloc_no_constraints(to_space, old_data, index.value());
     // ISSUE: ptr object data could be updated during the memcpy
     {
-        auto lk2 = std::unique_lock{m_test_mu};
+        // auto lk2 = std::unique_lock{m_test_mu};
         // SANITY CHECK
         auto mem_lock = region_readonly(ptr, old_data.size);
         asm("mfence" ::: "memory");

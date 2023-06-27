@@ -7,6 +7,8 @@
 #include "safe_alloc.h"
 #include "safe_ptr.h"
 
+std::mutex g_mu;
+
 void thread_alloc(size_t thread_id)
 {
     GC_UPDATE_STACK_RANGE();
@@ -15,7 +17,7 @@ void thread_alloc(size_t thread_id)
         ASSERT_NE(array, nullptr);
         ASSERT_EQ(array.size(), 1000u);
         {
-            auto lk = gcpp::test_lock();
+            auto lk = std::unique_lock{g_mu};
             for (size_t j = 0; j < 1000; ++j) {
                 ASSERT_EQ(array[j], 0);
                 array[j] = static_cast<int>((thread_id + 1) * i * j);
@@ -47,7 +49,7 @@ TEST(MtTest, DataChanging)
     memset(local_array.data(), 0, 100 * sizeof(int));
     auto t = std::jthread(thread_alloc, 0);
     for (int i = 0; i < 1000; ++i) {
-        auto lk = gcpp::test_lock();
+        auto lk = std::unique_lock{g_mu};
         for (int j = 0; j < 64; ++j) {
             const auto idx =
                 static_cast<size_t>(rand() % static_cast<int>(array.size()));
