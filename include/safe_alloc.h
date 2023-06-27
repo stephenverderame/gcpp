@@ -1,4 +1,6 @@
 #pragma once
+#include <mutex>
+
 #include "gc_base.h"
 namespace gcpp
 {
@@ -18,6 +20,8 @@ struct GC {
                         std::align_val_t alignment = std::align_val_t{1});
     static void collect() noexcept;
 };
+
+[[nodiscard]] std::unique_lock<std::mutex> test_lock();
 
 static_assert(GCFrontEnd<GC>);
 

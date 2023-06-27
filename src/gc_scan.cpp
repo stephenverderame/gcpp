@@ -15,17 +15,17 @@ namespace
 {
 
 /** Get's the path to the process executable */
-auto get_proc_name()
-{
-    // null-terminator separated list of arguments
-    std::ifstream proc("/proc/self/cmdline");
-    std::string proc_name;
-    proc >> proc_name;
-    if (!proc_name.empty() && proc_name[proc_name.size() - 1] == '\0') {
-        proc_name.pop_back();
-    }
-    return proc_name;
-}
+// auto get_proc_name()
+// {
+//     // null-terminator separated list of arguments
+//     std::ifstream proc("/proc/self/cmdline");
+//     std::string proc_name;
+//     proc >> proc_name;
+//     if (!proc_name.empty() && proc_name[proc_name.size() - 1] == '\0') {
+//         proc_name.pop_back();
+//     }
+//     return proc_name;
+// }
 /** Gets the current stack pointer */
 inline auto get_sp()
 {
@@ -38,16 +38,15 @@ inline auto get_sp()
 auto scan_globals() noexcept
 {
     // scans the "data segment" for all possible global GC ptrs
-    const auto proc_name = get_proc_name();
+    // const auto proc_name = get_proc_name();
     // contains lines of the form:
     // <start_addr>-<end_addr> <access> <other_stuff>           <process_name>
     std::ifstream proc("/proc/self/maps");
     std::string line;
     std::vector<uintptr_t> vals;
     while (std::getline(proc, line)) {
-        if (line.find(proc_name) != std::string::npos) {
-            // section is not a library the executable is linked with or
-            // non-data segment
+        if (line.find("/") != std::string::npos) {
+            // section is not a non-data segment
             const auto access = line.substr(line.find(' ') + 1, 4);
             if (access.find('r') != std::string::npos &&
                 access.find('x') == std::string::npos) {
@@ -64,7 +63,7 @@ auto scan_globals() noexcept
                     [&vals](auto val) {
                         vals.push_back(reinterpret_cast<uintptr_t>(val));
                     },
-                    true);
+                    access.find('w') == std::string::npos);
             }
         }
     }

@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "gc_scan.h"
+#include "safe_alloc.h"
 #include "safe_ptr.h"
 
 void thread_alloc(size_t thread_id)
@@ -13,8 +14,12 @@ void thread_alloc(size_t thread_id)
         auto array = gcpp::make_safe<int[]>(1000u);
         ASSERT_NE(array, nullptr);
         ASSERT_EQ(array.size(), 1000u);
-        for (size_t j = 0; j < 1000; ++j) {
-            array[j] = static_cast<int>((thread_id + 1) * i * j);
+        {
+            auto lk = gcpp::test_lock();
+            for (size_t j = 0; j < 1000; ++j) {
+                ASSERT_EQ(array[j], 0);
+                array[j] = static_cast<int>((thread_id + 1) * i * j);
+            }
         }
         size_t j = 0;
         for (auto e : array) {
@@ -42,6 +47,7 @@ TEST(MtTest, DataChanging)
     memset(local_array.data(), 0, 100 * sizeof(int));
     auto t = std::jthread(thread_alloc, 0);
     for (int i = 0; i < 1000; ++i) {
+        auto lk = gcpp::test_lock();
         for (int j = 0; j < 64; ++j) {
             const auto idx =
                 static_cast<size_t>(rand() % static_cast<int>(array.size()));

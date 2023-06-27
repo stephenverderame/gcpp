@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <mutex>
 #include <new>
 #include <ranges>
 #include <stdexcept>
@@ -37,6 +38,7 @@ class CopyingCollector
     mutable LockPolicy m_lock;
     /** Debugging: thread count in async_collect */
     std::atomic<size_t> m_tcount = 0;
+    std::mutex m_test_mu;
 
   public:
     /**
@@ -84,6 +86,8 @@ class CopyingCollector
      */
     void collect(
         size_t needed_space = std::numeric_limits<size_t>::max()) noexcept;
+
+    auto test_lock() { return std::unique_lock{m_test_mu}; }
 
   private:
     /**

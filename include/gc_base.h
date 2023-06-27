@@ -184,13 +184,16 @@ struct FatPtr {
         assert((reinterpret_cast<uintptr_t>(&m_ptr) &
                 (alignof(uintptr_t) - 1)) == 0);
         /*
-            On x86, the move instruction to an aligned address is atomic
+            On x86, the move instruction to an aligned address is atomic release
+            and the move from an aligned address is atomic acquire.
             To make sure the compiler directly uses a single move instruction
             to update `m_ptr`, we write the assembly directly.
 
             Another option is to have the FatPtr templated on a locking policy
             and contain a lock. Since we have other x86 assembly inlined, I'll
            try this first.
+
+           We use xchgq for sequential consistency.
         */
         asm("lock xchgq %1, %0" : "=m"(m_ptr) : "r"(other.m_ptr) : "memory");
     }
@@ -232,15 +235,26 @@ struct FatPtr {
 
     /**
      * @brief Tests if the given pointer is still a GC pointer, and if so
-     * returns a copy
+     * returns a copy.
+     * Requires `ptr` and `ptr + 1` are valid addresses and are aligned to
+     * `alignof(FatPtr)`
      *
      * @param ptr
      * @return std::optional<FatPtr>
      */
-    static std::optional<FatPtr> test_ptr(const FatPtr* ptr)
+    __attribute__((no_sanitize("thread"))) static std::optional<FatPtr>
+    test_ptr(const FatPtr* ptr)
     {
-        asm("mfence" ::: "memory");
-        auto val = *ptr;
+        FatPtr val;
+        // use mov to ensure 8-byte move for atomicity
+        asm("mfence\n"
+            "mov (%2), %%rax\n"
+            "mov 8(%2), %%rcx\n"
+            "mov %%rax, %0\n"
+            "mov %%rcx, %1"
+            : "=rm"(val.m_header), "=rm"(val.m_ptr)
+            : "r"(ptr)
+            : "rax", "rcx", "memory");
         if (FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(&val))) {
             return val;
         }

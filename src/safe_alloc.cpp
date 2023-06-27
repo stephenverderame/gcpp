@@ -1,5 +1,7 @@
 #include "safe_alloc.h"
 
+#include <mutex>
+
 #include "concurrent_gc.h"
 #include "copy_collector.h"
 #include "gc_scan.h"
@@ -23,4 +25,9 @@ void gcpp::GC::collect() noexcept
 {
     GC_UPDATE_STACK_RANGE();
     g_collector.collect();
+}
+
+std::unique_lock<std::mutex> gcpp::test_lock()
+{
+    return g_collector.test_lock();
 }

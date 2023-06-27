@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <new>
 #include <stack>
 #include <stdexcept>
@@ -173,8 +174,20 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
     const auto [to_space, alloc_index] = [this, alignment, size]() {
         auto lk = m_lock.lock();
         const auto to = SpaceNum{load(m_space_num)};
-        return std::make_tuple(
-            to, reserve_space(size, to, alignment, m_max_alloc_size));
+        const auto index = reserve_space(size, to, alignment, m_max_alloc_size);
+        if (index) {
+            // SANITY CHECK
+            for (auto& [ptr, data] : m_metadata) {
+                const auto addr =
+                    &m_spaces[static_cast<size_t>(to)][index.value()];
+                const auto ptr_v = ptr.as_ptr();
+                if ((ptr_v <= addr && ptr_v + data.size > addr) ||
+                    (addr <= ptr_v && addr + size > ptr_v)) {
+                    throw std::runtime_error("Heap corruption");
+                }
+            }
+        }
+        return std::make_tuple(to, index);
         (void)lk;
     }();
     if (!alloc_index) {
@@ -185,6 +198,9 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
             throw std::bad_alloc();
         }
     }
+    // SANITY CHECK
+    memset(&m_spaces[static_cast<uint8_t>(to_space)][alloc_index.value()], 0,
+           size);
     return alloc_no_constraints(to_space, {size, alignment}, *alloc_index);
 }
 template <gcpp::CollectorLockingPolicy L>
@@ -216,12 +232,29 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
         m_lock.do_with_lock([this, ptr]() { return m_metadata.at(ptr); });
     auto index = reserve_space(old_data.size, to_space, old_data.alignment,
                                m_spaces[0].size());
+    if (index) {
+        // SANITY CHECK
+        m_lock.do_with_lock(
+            [this, index, to = to_space, size = old_data.size]() {
+                for (auto& [f_ptr, data] : m_metadata) {
+                    const auto addr =
+                        &m_spaces[static_cast<size_t>(to)][index.value()];
+                    const auto ptr_v = f_ptr.as_ptr();
+                    if ((ptr_v <= addr && ptr_v + data.size > addr) ||
+                        (addr <= ptr_v && addr + size > ptr_v)) {
+                        throw std::runtime_error("Heap corruption");
+                    }
+                }
+            });
+    }
     if (!index) {
         throw std::bad_alloc();
     }
     auto new_obj = alloc_no_constraints(to_space, old_data, index.value());
     // ISSUE: ptr object data could be updated during the memcpy
     {
+        auto lk2 = std::unique_lock{m_test_mu};
+        // SANITY CHECK
         auto mem_lock = region_readonly(ptr, old_data.size);
         asm("mfence" ::: "memory");
         memcpy(new_obj, ptr, old_data.size);
@@ -288,6 +321,17 @@ gcpp::CopyingCollector<LockPolicy>::async_collect(
                         })) {
             forward_ptr(to_space, *it, visited);
         }
+        m_lock.do_with_lock([this, &visited, to_space]() {
+            std::vector<FatPtr> to_remove = {};
+            for (auto& [ptr, _] : m_metadata) {
+                if (get_space_num(ptr) != to_space && !visited.contains(ptr)) {
+                    to_remove.push_back(ptr);
+                }
+            }
+            for (auto ptr : to_remove) {
+                m_metadata.erase(ptr);
+            }
+        });
         return promoted;
     });
 }
