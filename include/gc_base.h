@@ -80,6 +80,10 @@ struct FatPtr {
     friend struct std::hash<FatPtr>;
 
   public:
+    /**
+     * @brief Gets the pointer (address of data) with sequential consistency
+     *
+     */
     __attribute__((no_sanitize("thread"))) auto atomic_load() const
     {
         volatile uintptr_t read_ptr = 0;
@@ -116,6 +120,8 @@ struct FatPtr {
      * @brief Determines if a value may be a pointer.
      * Requires `ptr` and `ptr + 1` are valid addresses and are aligned
      * to `FatPtr`
+     *
+     * Acquire semantics
      *
      * @param ptr
      * @return true if `ptr` may be a pointer
@@ -176,6 +182,8 @@ struct FatPtr {
      * Reading of `other` and updating of `m_ptr` do not necessarily happen in
      * one atomic instructions, however each one is atomic.
      *
+     * Sequentially consistent
+     *
      * @param other
      */
     __attribute__((no_sanitize("thread"))) inline void atomic_update(
@@ -202,6 +210,8 @@ struct FatPtr {
      * @brief Atomically compares the current pointer to `expected` and if they
      * are equal, updates the current pointer to `desired`. Otherwise, returns
      * the current pointer.
+     *
+     * Sequentially consistent
      *
      * @param expected the expected value of the pointer
      * @param desired the value to update the pointer to if it is equal to
@@ -235,7 +245,7 @@ struct FatPtr {
 
     /**
      * @brief Tests if the given pointer is still a GC pointer, and if so
-     * returns a copy.
+     * returns a copy. Loads with acquire semantics.
      * Requires `ptr` and `ptr + 1` are valid addresses and are aligned to
      * `alignof(FatPtr)`
      *

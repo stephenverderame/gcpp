@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "collector.h"
+#include "concurrent_gc.h"
 #include "copy_collector.h"
 #include "debug_thread_counter.h"
 #include "gc_base.h"
@@ -256,8 +257,7 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
         // auto lk2 = std::unique_lock{m_test_mu};
         // SANITY CHECK
         auto mem_lock = region_readonly(ptr, old_data.size);
-        asm("mfence" ::: "memory");
-        memcpy(new_obj, ptr, old_data.size);
+        seq_cst_cpy(new_obj, ptr, old_data.size);
     }
     auto lk = m_lock.lock();
     m_metadata.erase(ptr);

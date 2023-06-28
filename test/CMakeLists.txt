@@ -27,3 +27,5 @@ make_test (copy_test SOURCES copy_test.cpp)
 make_test (frontend_test SOURCES frontend_test.cpp)
 
 make_test (mt_test SOURCES mt_test.cpp)
+
+make_test (utils_test SOURCES utils_test.cpp)

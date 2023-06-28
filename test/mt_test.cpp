@@ -17,7 +17,7 @@ void thread_alloc(size_t thread_id)
         ASSERT_NE(array, nullptr);
         ASSERT_EQ(array.size(), 1000u);
         {
-            auto lk = std::unique_lock{g_mu};
+            // auto lk = std::unique_lock{g_mu};
             for (size_t j = 0; j < 1000; ++j) {
                 ASSERT_EQ(array[j], 0);
                 array[j] = static_cast<int>((thread_id + 1) * i * j);
@@ -54,8 +54,10 @@ TEST(MtTest, DataChanging)
             const auto idx =
                 static_cast<size_t>(rand() % static_cast<int>(array.size()));
             const auto val = rand() % std::numeric_limits<int>::max();
+            ASSERT_EQ(array[idx], local_array[idx]);
             array[idx] = val;
             local_array[idx] = val;
+            ASSERT_EQ(array[idx], local_array[idx]);
         }
         for (size_t j = 0; j < array.size(); ++j) {
             ASSERT_EQ(array[j], local_array[j])

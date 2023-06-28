@@ -71,4 +71,16 @@ class SerialGCPolicy
     static void release(lock_t&) {}
 };
 static_assert(CollectorLockingPolicy<SerialGCPolicy>);
+
+/**
+ * @brief Copies memory from src to dst, ensuring that the copy is atomic
+ * (byte-wise).
+ * Reads from `src` atomically with acquire memory ordering, and writes to `dst`
+ * atomically with sequential consistency.
+ *
+ * @param dst
+ * @param src
+ * @param size
+ */
+void seq_cst_cpy(void* dst, const void* src, size_t size);
 }  // namespace gcpp
