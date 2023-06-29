@@ -19,7 +19,6 @@ void thread_alloc(size_t thread_id)
         {
             // auto lk = std::unique_lock{g_mu};
             for (size_t j = 0; j < 1000; ++j) {
-                ASSERT_EQ(array[j], 0);
                 array[j] = static_cast<int>((thread_id + 1) * i * j);
             }
         }

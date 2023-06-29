@@ -18,11 +18,11 @@ enum class SpaceNum : uint8_t { Zero = 0, One = 1 };
 template <CollectorLockingPolicy LockPolicy>
 class CopyingCollector
 {
-    using MemStore =
-        std::vector<std::byte,
-                    AlignedAllocator<std::byte, page_size_alignment>>;
+    using MemStore = std::unique_ptr<std::byte[]>;
 
   private:
+    /** Size of each mem store*/
+    size_t m_heap_size;
     /** The two spaces of the heap */
     std::array<MemStore, 2> m_spaces;
     /** Next index to allocate an object */
@@ -47,19 +47,22 @@ class CopyingCollector
      * @{
      */
     explicit CopyingCollector(size_t size)
-        : m_spaces(
-              {MemStore(page_size_ceil(size)), MemStore(page_size_ceil(size))}),
-          m_metadata(m_spaces[0].size() / 4),
+        : m_heap_size(page_size_ceil(size)),
+          m_spaces(
+              {MemStore(new(page_size_align()) std::byte[page_size_ceil(size)]),
+               MemStore(new(page_size_align())
+                            std::byte[page_size_ceil(size)])}),
+          m_metadata(m_heap_size / 4),
           m_max_alloc_size(size / 2)
     {
         if (size >= ptr_mask) {
             throw std::runtime_error("Heap size too large");
         }
-        register_heap(m_spaces[0].data(), m_spaces[0].size());
-        register_heap(m_spaces[1].data(), m_spaces[1].size());
-        assert((reinterpret_cast<uintptr_t>(m_spaces[0].data()) &
+        register_heap(m_spaces[0].get(), m_heap_size);
+        register_heap(m_spaces[1].get(), m_heap_size);
+        assert((reinterpret_cast<uintptr_t>(m_spaces[0].get()) &
                 ~static_cast<uintptr_t>(page_size() - 1)) !=
-               (reinterpret_cast<uintptr_t>(m_spaces[1].data()) &
+               (reinterpret_cast<uintptr_t>(m_spaces[1].get()) &
                 ~static_cast<uintptr_t>(page_size() - 1)));
     }
 
@@ -93,11 +96,12 @@ class CopyingCollector
     /**
      * @brief Copies the object pointed to by `ptr` to the other space
      *
+     * @param to_update pointer to update to point to the copy if it equals `ptr`
      * @param to_space space to copy the object to
      * @param ptr pointer to object to copy
      * @return FatPtr pointer to the copy of the object
      */
-    [[nodiscard]] FatPtr copy(SpaceNum to_space, const FatPtr& ptr);
+    [[nodiscard]] FatPtr copy(FatPtr& to_update, SpaceNum to_space, const FatPtr& ptr);
 
     /**
      * @brief Forwards a pointer to the other space
@@ -159,6 +163,19 @@ class CopyingCollector
     [[nodiscard]] std::optional<size_t> reserve_space(
         size_t size, SpaceNum to_space, std::align_val_t alignment,
         size_t max_alloc_size);
+
+    /**
+     * @brief Checks if a new allocation of the given size, starting
+     * (excluding padding) at the given index in the given space overlaps
+     * with any existing allocations. If so, throws.
+     * Requires having a lock.
+     *
+     * @param index
+     * @param space
+     * @param size
+     */
+    void check_overlapping_alloc(const std::optional<size_t>& index,
+                                 SpaceNum space, size_t size) const;
 };
 
 static_assert(Collector<CopyingCollector<SerialGCPolicy>>);

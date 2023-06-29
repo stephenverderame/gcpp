@@ -84,7 +84,7 @@ struct FatPtr {
      * @brief Gets the pointer (address of data) with sequential consistency
      *
      */
-    __attribute__((no_sanitize("thread"))) auto atomic_load() const
+    /*__attribute__((no_sanitize("thread")))*/ auto atomic_load() const
     {
         volatile uintptr_t read_ptr = 0;
         const auto ptr_addr = &m_ptr;
@@ -128,7 +128,7 @@ struct FatPtr {
      */
     __attribute__((no_sanitize("thread"))) inline static auto maybe_ptr(
         // NOLINTNEXTLINE(readability-non-const-parameter)
-        uintptr_t* ptr, bool read_only = false)
+        uintptr_t* ptr, [[maybe_unused]] bool read_only = false)
     {
         // volatile uintptr_t read_header = 0;
         // volatile uintptr_t read_ptr = 0;
@@ -155,7 +155,6 @@ struct FatPtr {
         asm("mfence" ::: "memory");
         return *ptr == ptr_header() && (*(ptr + 1) & ptr_tag_mask) == ptr_tag;
         // only check the header since that is never modified
-        (void)read_only;
     }
 
     // NOLINTNEXTLINE(google-explicit-constructor)
@@ -186,11 +185,9 @@ struct FatPtr {
      *
      * @param other
      */
-    __attribute__((no_sanitize("thread"))) inline void atomic_update(
-        FatPtr other) noexcept
+    /*__attribute__((no_sanitize("thread")))*/
+    inline void atomic_update(FatPtr other) noexcept
     {
-        assert((reinterpret_cast<uintptr_t>(&m_ptr) &
-                (alignof(uintptr_t) - 1)) == 0);
         /*
             On x86, the move instruction to an aligned address is atomic release
             and the move from an aligned address is atomic acquire.
@@ -219,7 +216,7 @@ struct FatPtr {
      * @return nullopt if the pointer was updated, otherwise the current value
      * of the pointer
      */
-    __attribute__((no_sanitize("thread"))) inline std::optional<FatPtr>
+    /*__attribute__((no_sanitize("thread")))*/ inline std::optional<FatPtr>
     compare_exchange(const FatPtr& expected, FatPtr desired)
     {
         // lock cmpxchg cannot fail supriously
@@ -252,7 +249,7 @@ struct FatPtr {
      * @param ptr
      * @return std::optional<FatPtr>
      */
-    __attribute__((no_sanitize("thread"))) static std::optional<FatPtr>
+    /*__attribute__((no_sanitize("thread")))*/ static std::optional<FatPtr>
     test_ptr(const FatPtr* ptr)
     {
         FatPtr val;

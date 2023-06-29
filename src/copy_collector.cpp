@@ -106,8 +106,8 @@ gcpp::SpaceNum gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
     // safe w/o lock bc we never reallocate m_spaces
     const auto addr = ptr.as_ptr();
     for (uint8_t i = 0; i < 2; ++i) {
-        if (addr >= m_spaces[i].data() &&
-            addr < m_spaces[i].data() + m_spaces[i].size()) {
+        if (addr >= m_spaces[i].get() &&
+            addr < m_spaces[i].get() + m_heap_size) {
             return SpaceNum{i};
         }
     }
@@ -130,10 +130,9 @@ template <gcpp::CollectorLockingPolicy L>
 bool gcpp::CopyingCollector<L>::contains(void* ptr) const noexcept
 {
     // safe w/o lock
-    return (ptr >= m_spaces[0].data() &&
-            ptr < m_spaces[0].data() + m_spaces[0].size()) ||
-           (ptr >= m_spaces[1].data() &&
-            ptr < m_spaces[1].data() + m_spaces[1].size());
+    return (ptr >= m_spaces[0].get() &&
+            ptr < m_spaces[0].get() + m_heap_size) ||
+           (ptr >= m_spaces[1].get() && ptr < m_spaces[1].get() + m_heap_size);
 }
 /**
  * @brief Determines the number of bytes of padding required to align the
@@ -156,12 +155,11 @@ template <gcpp::CollectorLockingPolicy L>
 FatPtr gcpp::CopyingCollector<L>::alloc_no_constraints(
     SpaceNum to_space_num, const MetaData& meta_data, size_t index)
 {
-    if (meta_data.size + index >= m_spaces[0].size()) {
+    if (meta_data.size + index >= m_heap_size) {
         throw std::bad_alloc();
     }
     auto ptr = FatPtr{reinterpret_cast<uintptr_t>(
         &m_spaces[static_cast<uint8_t>(to_space_num)][index])};
-    // store size + padding in heap
     auto lk = m_lock.lock();
     m_metadata.emplace(ptr, meta_data);
     (void)lk;
@@ -173,23 +171,11 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
                                                 uint8_t attempts)
 {
     const auto [to_space, alloc_index] = [this, alignment, size]() {
-        auto lk = m_lock.lock();
+        [[maybe_unused]] auto lk = m_lock.lock();
         const auto to = SpaceNum{load(m_space_num)};
         const auto index = reserve_space(size, to, alignment, m_max_alloc_size);
-        if (index) {
-            // SANITY CHECK
-            for (auto& [ptr, data] : m_metadata) {
-                const auto addr =
-                    &m_spaces[static_cast<size_t>(to)][index.value()];
-                const auto ptr_v = ptr.as_ptr();
-                if ((ptr_v <= addr && ptr_v + data.size > addr) ||
-                    (addr <= ptr_v && addr + size > ptr_v)) {
-                    throw std::runtime_error("Heap corruption");
-                }
-            }
-        }
+        check_overlapping_alloc(index, to, size);
         return std::make_tuple(to, index);
-        (void)lk;
     }();
     if (!alloc_index) {
         if (attempts < 1) {
@@ -199,9 +185,6 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
             throw std::bad_alloc();
         }
     }
-    // SANITY CHECK
-    memset(&m_spaces[static_cast<uint8_t>(to_space)][alloc_index.value()], 0,
-           size);
     return alloc_no_constraints(to_space, {size, alignment}, *alloc_index);
 }
 template <gcpp::CollectorLockingPolicy L>
@@ -223,31 +206,22 @@ std::optional<size_t> gcpp::CopyingCollector<L>::reserve_space(
     return next + padding_bytes;
 }
 template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
+FatPtr gcpp::CopyingCollector<L>::copy(FatPtr& to_update, SpaceNum to_space, const FatPtr& ptr)
 {
-    if (get_space_num(ptr) == to_space) {
-        // root is in to_space
-        return ptr;
+    {
+        [[maybe_unused]] auto lk = m_lock.lock();
+        if (get_space_num(ptr) == to_space) {
+            // root is in to_space
+            return ptr;
+        }
     }
     const auto old_data =
         m_lock.do_with_lock([this, ptr]() { return m_metadata.at(ptr); });
-    auto index = reserve_space(old_data.size, to_space, old_data.alignment,
-                               m_spaces[0].size());
-    if (index) {
-        // SANITY CHECK
-        m_lock.do_with_lock(
-            [this, index, to = to_space, size = old_data.size]() {
-                for (auto& [f_ptr, data] : m_metadata) {
-                    const auto addr =
-                        &m_spaces[static_cast<size_t>(to)][index.value()];
-                    const auto ptr_v = f_ptr.as_ptr();
-                    if ((ptr_v <= addr && ptr_v + data.size > addr) ||
-                        (addr <= ptr_v && addr + size > ptr_v)) {
-                        throw std::runtime_error("Heap corruption");
-                    }
-                }
-            });
-    }
+    auto index =
+        reserve_space(old_data.size, to_space, old_data.alignment, m_heap_size);
+    m_lock.do_with_lock([this, index, to_space, size = old_data.size]() {
+        check_overlapping_alloc(index, to_space, size);
+    });
     if (!index) {
         throw std::bad_alloc();
     }
@@ -258,10 +232,10 @@ FatPtr gcpp::CopyingCollector<L>::copy(SpaceNum to_space, const FatPtr& ptr)
         // SANITY CHECK
         auto mem_lock = region_readonly(ptr, old_data.size);
         seq_cst_cpy(new_obj, ptr, old_data.size);
+        to_update.compare_exchange(ptr, new_obj);
     }
-    auto lk = m_lock.lock();
+    [[maybe_unused]] auto lk = m_lock.lock();
     m_metadata.erase(ptr);
-    (void)lk;
     return new_obj;
 }
 template <gcpp::CollectorLockingPolicy L>
@@ -281,10 +255,10 @@ void gcpp::CopyingCollector<L>::forward_ptr(
         if (visited.contains(ptr_val)) {
             p.get().compare_exchange(ptr_val, visited.at(ptr_val));
             continue;
-        } else if (m_lock.do_with_lock([this, ptr_val]() {
-                       return !m_metadata.contains(ptr_val);
-                   }) ||
-                   get_space_num(ptr_val) == to_space) {
+        } else if (m_lock.do_with_lock([this, ptr_val, to_space]() {
+                       return !m_metadata.contains(ptr_val) ||
+                              get_space_num(ptr_val) == to_space;
+                   })) {
             continue;
         }
         {
@@ -295,9 +269,8 @@ void gcpp::CopyingCollector<L>::forward_ptr(
                         [&stack](auto ptr) { stack.emplace(*ptr); });
         }
         // meta_data& is invalidated by copy
-        auto new_ptr = copy(to_space, ptr_val);
+        auto new_ptr = copy(p.get(), to_space, ptr_val);
         visited.emplace(ptr_val, new_ptr);
-        p.get().compare_exchange(ptr_val, new_ptr);
     }
 }
 
@@ -345,14 +318,13 @@ void gcpp::CopyingCollector<Lock>::collect(size_t needed_space) noexcept
            free_space() < needed_space) {
         m_collect_result.wait();
     }
-    auto lk = m_lock.lock();
+    [[maybe_unused]] auto lk = m_lock.lock();
     if (free_space() < needed_space &&
         (!m_collect_result.valid() ||
          m_collect_result.wait_for(std::chrono::seconds(0)) ==
              std::future_status::ready)) {
         m_collect_result = async_collect({});
     }
-    (void)lk;
 }
 
 template <gcpp::CollectorLockingPolicy Lock>
@@ -368,6 +340,20 @@ FatPtr gcpp::CopyingCollector<Lock>::alloc(size_t size,
         throw std::bad_alloc();
     }
     return alloc_attempt(size, alignment, 0);
+}
+
+template <gcpp::CollectorLockingPolicy Lock>
+void gcpp::CopyingCollector<Lock>::check_overlapping_alloc(
+    const std::optional<size_t>& index, SpaceNum space, size_t size) const
+{
+    for (auto& [f_ptr, data] : m_metadata) {
+        const auto addr = &m_spaces[static_cast<size_t>(space)][index.value()];
+        const auto ptr_v = f_ptr.as_ptr();
+        if ((ptr_v <= addr && ptr_v + data.size > addr) ||
+            (addr <= ptr_v && addr + size > ptr_v)) {
+            throw std::runtime_error("Heap corruption");
+        }
+    }
 }
 
 template class gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
