@@ -58,7 +58,7 @@ auto scan_globals() noexcept
                     addr_midpt + 1, line.find(' ') - addr_midpt - 1);
                 const auto data_start = std::stoull(addr_start, nullptr, 16);
                 const auto data_end = std::stoull(addr_end, nullptr, 16);
-                scan_memory(
+                gcpp::scan_memory(
                     data_start, data_end,
                     [&vals](auto val) {
                         vals.push_back(reinterpret_cast<uintptr_t>(val));
@@ -94,7 +94,7 @@ std::vector<uintptr_t> gcpp::GCRoots::scan_locals(std::thread::id id)
     const auto scan_callback = [&local_roots](auto ptr) {
         local_roots.push_back(reinterpret_cast<uintptr_t>(ptr));
     };
-    scan_memory(stack_end - red_zone_size, stack_start + 1, scan_callback);
+    gcpp::scan_memory(stack_end - red_zone_size, stack_start + 1, scan_callback);
     return local_roots;
 }
 

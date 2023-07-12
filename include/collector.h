@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gc_base.h"
+#include "generational_gc.h"
 #include "mem_prot.h"
 namespace gcpp
 {
@@ -97,13 +98,6 @@ concept CollectorLockingPolicy = requires(T t) {
     {
         T::release(std::declval<typename T::lock_t&>())
     };
-};
-/**
- * @brief Metadata of an object managed by the GC
- */
-struct MetaData {
-    size_t size;
-    std::align_val_t alignment;
 };
 
 /**

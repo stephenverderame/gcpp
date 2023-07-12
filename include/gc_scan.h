@@ -84,7 +84,7 @@ class GCRoots
     {                                                                  \
         volatile uintptr_t base_ptr;                                   \
         /* move rbp into `base_ptr`, AT&T syntax */                    \
-        asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                      \
+        asm("mov " RBP ", %0 \n" : "=r"(base_ptr));                      \
         (out_vec) = gcpp::GCRoots::get_instance().get_roots(base_ptr); \
     }
 /**
@@ -96,7 +96,7 @@ class GCRoots
 #define GC_UPDATE_STACK_RANGE()                                     \
     {                                                               \
         volatile uintptr_t base_ptr;                                \
-        asm("mov %%rbp, %0 \n" : "=r"(base_ptr));                   \
+        asm("mov " RBP ", %0 \n" : "=r"(base_ptr));                   \
         gcpp::GCRoots::get_instance().update_stack_range(base_ptr); \
     }
 /**
@@ -107,7 +107,7 @@ class GCRoots
 #define GC_UPDATE_STACK_RANGE_NESTED_1()                                   \
     {                                                                      \
         volatile uintptr_t caller_base_ptr;                                \
-        asm("mov (%%rbp), %0 \n" : "=r"(caller_base_ptr));                 \
+        asm("mov (" RBP "), %0 \n" : "=r"(caller_base_ptr));                 \
         gcpp::GCRoots::get_instance().update_stack_range(caller_base_ptr); \
     }
 }  // namespace gcpp

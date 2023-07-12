@@ -10,12 +10,13 @@
 #include "collector.h"
 #include "concurrent_gc.h"
 #include "gc_base.h"
+#include "generational_gc.h"
 #include "mem_prot.h"
 
 namespace gcpp
 {
 enum class SpaceNum : uint8_t { Zero = 0, One = 1 };
-template <CollectorLockingPolicy LockPolicy>
+template <CollectorLockingPolicy LockPolicy, GCGenerationPolicy GenPolicy>
 class CopyingCollector
 {
     using MemStore = std::unique_ptr<std::byte[]>;
@@ -39,6 +40,7 @@ class CopyingCollector
     /** Debugging: thread count in async_collect */
     std::atomic<size_t> m_tcount = 0;
     std::mutex m_test_mu;
+    GenPolicy m_gen_policy;
 
   public:
     /**
@@ -53,7 +55,8 @@ class CopyingCollector
                MemStore(new(page_size_align())
                             std::byte[page_size_ceil(size)])}),
           m_metadata(m_heap_size / 4),
-          m_max_alloc_size(size / 2)
+          m_max_alloc_size(size / 2),
+          m_gen_policy()
     {
         if (size >= ptr_mask) {
             throw std::runtime_error("Heap size too large");
@@ -96,12 +99,14 @@ class CopyingCollector
     /**
      * @brief Copies the object pointed to by `ptr` to the other space
      *
-     * @param to_update pointer to update to point to the copy if it equals `ptr`
+     * @param to_update pointer to update to point to the copy if it equals
+     * `ptr`
      * @param to_space space to copy the object to
      * @param ptr pointer to object to copy
      * @return FatPtr pointer to the copy of the object
      */
-    [[nodiscard]] FatPtr copy(FatPtr& to_update, SpaceNum to_space, const FatPtr& ptr);
+    [[nodiscard]] FatPtr copy(FatPtr& to_update, SpaceNum to_space,
+                              const FatPtr& ptr);
 
     /**
      * @brief Forwards a pointer to the other space
@@ -178,6 +183,8 @@ class CopyingCollector
                                  SpaceNum space, size_t size) const;
 };
 
-static_assert(Collector<CopyingCollector<SerialGCPolicy>>);
-static_assert(Collector<CopyingCollector<ConcurrentGCPolicy>>);
+static_assert(
+    Collector<CopyingCollector<SerialGCPolicy, FinalGenerationPolicy>>);
+static_assert(
+    Collector<CopyingCollector<ConcurrentGCPolicy, FinalGenerationPolicy>>);
 }  // namespace gcpp

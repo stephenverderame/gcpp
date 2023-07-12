@@ -10,6 +10,11 @@
 #include "safe_alloc.h"
 namespace gcpp
 {
+
+template <typename T, GCFrontEnd GC>
+class SafePtrAccess {
+
+};
 /**
  * @brief Gets the alignment of a given type. If the type is incomplete, returns
  * the maximum alignment for regular types.

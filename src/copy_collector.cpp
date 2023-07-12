@@ -22,7 +22,33 @@
 #include "debug_thread_counter.h"
 #include "gc_base.h"
 #include "gc_scan.h"
+#include "generational_gc.h"
 #include "mem_prot.h"
+
+/*
+I've been thinking for a bit on how best to implement a concurrent copying
+collector that is relatively efficient with short pause times.
+
+The main issue is synchronization of copying and flipping of pointers.
+One approach was Nettles' replication-based approach, but the problem is we
+need to, on each write, check if there is a forwarding pointer and if so, write
+to the replica as well as the original. This is less overhead than using locks
+but the problem is:
+- mutators gets a reference to the original
+- collector sets the forwarding pointer
+- mutator still has the reference to the original and invokes a long, mutating
+operation on it
+
+The Sapphire algorithm is another option, but I think it suffers a similar
+issue.
+
+The general issue is I don't think we can install an access barrier on the
+object data without compiler support. We can do them on the pointers themselves
+via copy/move constructors and copy/move assignments, but not on the object
+data.
+
+Problem with locks is that they might deadlock.
+*/
 
 namespace
 {
@@ -100,8 +126,9 @@ inline std::pair<gcpp::SpaceNum, gcpp::SpaceNum> flip_space(
 
 }  // namespace
 
-template <gcpp::CollectorLockingPolicy L>
-gcpp::SpaceNum gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+gcpp::SpaceNum gcpp::CopyingCollector<L, G>::get_space_num(
+    const FatPtr& ptr) const
 {
     // safe w/o lock bc we never reallocate m_spaces
     const auto addr = ptr.as_ptr();
@@ -114,8 +141,8 @@ gcpp::SpaceNum gcpp::CopyingCollector<L>::get_space_num(const FatPtr& ptr) const
     throw std::runtime_error("Collector does not manage given ptr");
 }
 
-template <gcpp::CollectorLockingPolicy L>
-size_t gcpp::CopyingCollector<L>::free_space() const noexcept
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+size_t gcpp::CopyingCollector<L, G>::free_space() const noexcept
 {
     // safe w/o lock (never update m_spaces)
     const auto sp_num = load(m_space_num);
@@ -126,8 +153,8 @@ size_t gcpp::CopyingCollector<L>::free_space() const noexcept
     return m_max_alloc_size - next;
 }
 
-template <gcpp::CollectorLockingPolicy L>
-bool gcpp::CopyingCollector<L>::contains(void* ptr) const noexcept
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+bool gcpp::CopyingCollector<L, G>::contains(void* ptr) const noexcept
 {
     // safe w/o lock
     return (ptr >= m_spaces[0].get() &&
@@ -151,8 +178,8 @@ uint8_t calc_alignment_bytes(const std::byte* cur_ptr,
     }
     return alignment_bytes;
 }
-template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::alloc_no_constraints(
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+FatPtr gcpp::CopyingCollector<L, G>::alloc_no_constraints(
     SpaceNum to_space_num, const MetaData& meta_data, size_t index)
 {
     if (meta_data.size + index >= m_heap_size) {
@@ -160,15 +187,15 @@ FatPtr gcpp::CopyingCollector<L>::alloc_no_constraints(
     }
     auto ptr = FatPtr{reinterpret_cast<uintptr_t>(
         &m_spaces[static_cast<uint8_t>(to_space_num)][index])};
-    auto lk = m_lock.lock();
+    [[maybe_unused]] auto lk = m_lock.lock();
     m_metadata.emplace(ptr, meta_data);
-    (void)lk;
+    m_gen_policy.init(ptr);
     return ptr;
 }
-template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
-                                                std::align_val_t alignment,
-                                                uint8_t attempts)
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+FatPtr gcpp::CopyingCollector<L, G>::alloc_attempt(const size_t size,
+                                                   std::align_val_t alignment,
+                                                   uint8_t attempts)
 {
     const auto [to_space, alloc_index] = [this, alignment, size]() {
         [[maybe_unused]] auto lk = m_lock.lock();
@@ -187,8 +214,8 @@ FatPtr gcpp::CopyingCollector<L>::alloc_attempt(const size_t size,
     }
     return alloc_no_constraints(to_space, {size, alignment}, *alloc_index);
 }
-template <gcpp::CollectorLockingPolicy L>
-std::optional<size_t> gcpp::CopyingCollector<L>::reserve_space(
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+std::optional<size_t> gcpp::CopyingCollector<L, G>::reserve_space(
     size_t size, SpaceNum to_space, std::align_val_t alignment,
     size_t max_alloc_size)
 {
@@ -205,8 +232,9 @@ std::optional<size_t> gcpp::CopyingCollector<L>::reserve_space(
                                next + size + padding_bytes));
     return next + padding_bytes;
 }
-template <gcpp::CollectorLockingPolicy L>
-FatPtr gcpp::CopyingCollector<L>::copy(FatPtr& to_update, SpaceNum to_space, const FatPtr& ptr)
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+FatPtr gcpp::CopyingCollector<L, G>::copy(FatPtr& to_update, SpaceNum to_space,
+                                          const FatPtr& ptr)
 {
     {
         [[maybe_unused]] auto lk = m_lock.lock();
@@ -230,7 +258,7 @@ FatPtr gcpp::CopyingCollector<L>::copy(FatPtr& to_update, SpaceNum to_space, con
     {
         // auto lk2 = std::unique_lock{m_test_mu};
         // SANITY CHECK
-        auto mem_lock = region_readonly(ptr, old_data.size);
+        // auto mem_lock = region_readonly(ptr, old_data.size);
         seq_cst_cpy(new_obj, ptr, old_data.size);
         to_update.compare_exchange(ptr, new_obj);
     }
@@ -238,8 +266,8 @@ FatPtr gcpp::CopyingCollector<L>::copy(FatPtr& to_update, SpaceNum to_space, con
     m_metadata.erase(ptr);
     return new_obj;
 }
-template <gcpp::CollectorLockingPolicy L>
-void gcpp::CopyingCollector<L>::forward_ptr(
+template <gcpp::CollectorLockingPolicy L, gcpp::GCGenerationPolicy G>
+void gcpp::CopyingCollector<L, G>::forward_ptr(
     SpaceNum to_space, FatPtr& ptr, std::unordered_map<FatPtr, FatPtr>& visited)
 {
     std::stack<std::reference_wrapper<FatPtr>> stack;
@@ -269,14 +297,19 @@ void gcpp::CopyingCollector<L>::forward_ptr(
                         [&stack](auto ptr) { stack.emplace(*ptr); });
         }
         // meta_data& is invalidated by copy
-        auto new_ptr = copy(p.get(), to_space, ptr_val);
+        const auto need_promotion = m_lock.do_with_lock(
+            [this, ptr_val]() { return m_gen_policy.need_promotion(ptr_val); });
+        auto new_ptr = need_promotion ? copy(p.get(), to_space, ptr_val) :
+            m_lock.do_with_lock([this, ptr_val]() {
+                return m_gen_policy.promote(ptr_val, m_metadata.at(ptr_val));
+            });
         visited.emplace(ptr_val, new_ptr);
     }
 }
 
-template <gcpp::CollectorLockingPolicy LockPolicy>
+template <gcpp::CollectorLockingPolicy LockPolicy, gcpp::GCGenerationPolicy G>
 std::future<std::vector<FatPtr>>
-gcpp::CopyingCollector<LockPolicy>::async_collect(
+gcpp::CopyingCollector<LockPolicy, G>::async_collect(
     const std::vector<FatPtr*>& extra_roots) noexcept
 {
     auto tc = ThreadCounter{m_tcount, 1};
@@ -303,14 +336,15 @@ gcpp::CopyingCollector<LockPolicy>::async_collect(
             }
             for (auto ptr : to_remove) {
                 m_metadata.erase(ptr);
+                m_gen_policy.collected(ptr);
             }
         });
         return promoted;
     });
 }
 
-template <gcpp::CollectorLockingPolicy Lock>
-void gcpp::CopyingCollector<Lock>::collect(size_t needed_space) noexcept
+template <gcpp::CollectorLockingPolicy Lock, gcpp::GCGenerationPolicy G>
+void gcpp::CopyingCollector<Lock, G>::collect(size_t needed_space) noexcept
 {
     while (m_collect_result.valid() &&
            m_collect_result.wait_for(std::chrono::seconds(0)) ==
@@ -327,23 +361,19 @@ void gcpp::CopyingCollector<Lock>::collect(size_t needed_space) noexcept
     }
 }
 
-template <gcpp::CollectorLockingPolicy Lock>
-FatPtr gcpp::CopyingCollector<Lock>::alloc(size_t size,
-                                           std::align_val_t alignment)
+template <gcpp::CollectorLockingPolicy Lock, gcpp::GCGenerationPolicy G>
+FatPtr gcpp::CopyingCollector<Lock, G>::alloc(size_t size,
+                                              std::align_val_t alignment)
 {
-    {
-        volatile uintptr_t caller_base_ptr = 0;
-        asm("mov (%%rbp), %0" : "=r"(caller_base_ptr));
-        GCRoots::get_instance().update_stack_range(caller_base_ptr);
-    }
+    GC_UPDATE_STACK_RANGE_NESTED_1();
     if (size == 0 || size > m_max_alloc_size) {
         throw std::bad_alloc();
     }
     return alloc_attempt(size, alignment, 0);
 }
 
-template <gcpp::CollectorLockingPolicy Lock>
-void gcpp::CopyingCollector<Lock>::check_overlapping_alloc(
+template <gcpp::CollectorLockingPolicy Lock, gcpp::GCGenerationPolicy G>
+void gcpp::CopyingCollector<Lock, G>::check_overlapping_alloc(
     const std::optional<size_t>& index, SpaceNum space, size_t size) const
 {
     for (auto& [f_ptr, data] : m_metadata) {
@@ -356,5 +386,7 @@ void gcpp::CopyingCollector<Lock>::check_overlapping_alloc(
     }
 }
 
-template class gcpp::CopyingCollector<gcpp::SerialGCPolicy>;
-template class gcpp::CopyingCollector<gcpp::ConcurrentGCPolicy>;
+template class gcpp::CopyingCollector<gcpp::SerialGCPolicy,
+                                      gcpp::FinalGenerationPolicy>;
+template class gcpp::CopyingCollector<gcpp::ConcurrentGCPolicy,
+                                      gcpp::FinalGenerationPolicy>;

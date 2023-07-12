@@ -16,12 +16,24 @@ constexpr auto addr_space_size = static_cast<uintptr_t>(1)
 #if defined(__x86_64__) && __x86_64__ || defined(_M_X64) && _M_X64
 #define REG_PREFIX "r"
 #define SIZE_SUFFIX "q"
+#define RAX_S "rax"
+#define RCX_S "rcx"
 #elif defined(__i386__) || defined(_M_IX86)
 #define REG_PREFIX "e"
 #define SIZE_SUFFIX "l"
+#define RAX_S "eax"
+#define RCX_S "ecx"
 #else
 #error "Unsupported architecture"
 #endif
+
+#define MOV "mov" SIZE_SUFFIX
+#define RAX "%%" REG_PREFIX "ax"
+#define RCX "%%" REG_PREFIX "cx"
+#define XCHG "xchg" SIZE_SUFFIX
+#define CMPXCHG "cmpxchg" SIZE_SUFFIX
+#define RSP "%%" REG_PREFIX "sp"
+#define RBP "%%" REG_PREFIX "bp"
 
 /**
  * We use a system of fat pointers to identify pointers.
@@ -88,13 +100,14 @@ struct FatPtr {
     {
         volatile uintptr_t read_ptr = 0;
         const auto ptr_addr = &m_ptr;
-        asm("xor %%rax, %%rax\n"
-            "movq %1, %%rcx\n"
-            "lock xadd %%rax, (%%rcx)\n"
-            "mov %%rax, %0"
+        asm("xor " RAX ", " RAX "\n" MOV " %1, " RCX
+            "\n"
+            "lock xadd " RAX ", (" RCX
+            ")\n"
+            "mov " RAX ", %0"
             : "=rm"(read_ptr)
             : "rm"(ptr_addr)
-            : "rax", "rcx", "memory");
+            : RAX_S, RCX_S, "memory");
         if ((read_ptr & ptr_tag_mask) != ptr_tag) {
             throw std::runtime_error("Invalid pointer");
         }
@@ -200,7 +213,7 @@ struct FatPtr {
 
            We use xchgq for sequential consistency.
         */
-        asm("lock xchgq %1, %0" : "=m"(m_ptr) : "r"(other.m_ptr) : "memory");
+        asm("lock " XCHG " %1, %0" : "=m"(m_ptr) : "r"(other.m_ptr) : "memory");
     }
 
     /**
@@ -222,17 +235,17 @@ struct FatPtr {
         // lock cmpxchg cannot fail supriously
         volatile bool success = false;
         volatile uintptr_t new_ptr = 0;
-        asm("movq %3, %%rax\n"
-            "movq %4, %%rcx\n"
-            "lock cmpxchgq %%rcx, %0\n"
-            "setz %1\n"
-            "movq %%rax, %2"
+        asm(MOV " %3, " RAX " \n" MOV " %4, " RCX
+                "\n"
+                "lock " CMPXCHG " " RCX
+                ", %0\n"
+                "setz %1\n" MOV " " RAX ", %2"
             // outputs
             : "=m"(m_ptr), "=r"(success), "=rm"(new_ptr)
             // inputs
             : "rm"(expected.m_ptr), "rm"(desired.m_ptr)
             // clobbers: things we overwrite ("clobber")
-            : "rax", "rcx", "memory");
+            : RAX_S, RCX_S, "memory");
         if (success) {
             return std::nullopt;
         } else {
@@ -255,13 +268,16 @@ struct FatPtr {
         FatPtr val;
         // use mov to ensure 8-byte move for atomicity
         asm("mfence\n"
-            "mov (%2), %%rax\n"
-            "mov 8(%2), %%rcx\n"
-            "mov %%rax, %0\n"
-            "mov %%rcx, %1"
+            "mov (%2), " RAX
+            "\n"
+            "mov 8(%2), " RCX
+            " \n"
+            "mov " RAX
+            ", %0\n"
+            "mov " RCX ", %1"
             : "=rm"(val.m_header), "=rm"(val.m_ptr)
             : "r"(ptr)
-            : "rax", "rcx", "memory");
+            : RAX_S, RCX_S, "memory");
         if (FatPtr::maybe_ptr(reinterpret_cast<uintptr_t*>(&val))) {
             return val;
         }
@@ -294,6 +310,8 @@ constexpr auto gc_ptr_alignment = std::alignment_of_v<FatPtr>;
 constexpr auto gc_ptr_alignment_mask = ~(gc_ptr_alignment - 1);
 /** Size of the redzone */
 constexpr auto red_zone_size = 128;
+namespace gcpp
+{
 
 /**
  * @brief Scans the memory between `begin` and `end` looking for GC pointers
@@ -318,3 +336,13 @@ inline void scan_memory(uintptr_t begin, uintptr_t end, Func f,
         }
     }
 }
+
+/**
+ * @brief Metadata of an object managed by the GC
+ */
+struct MetaData {
+    size_t size;
+    std::align_val_t alignment;
+};
+
+}  // namespace gcpp

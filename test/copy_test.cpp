@@ -20,7 +20,7 @@ template <typename T>
 void alloc_test(size_t total_size, std::function<size_t()> get_size,
                 uint8_t num_allocs)
 {
-    auto collector = gcpp::CopyingCollector<T>{total_size};
+    auto collector = gcpp::CopyingCollector<T, gcpp::FinalGenerationPolicy>{total_size};
 
     std::vector<std::tuple<FatPtr, size_t, std::byte>> ptrs;
     for (uint8_t i = 0; i < num_allocs; ++i) {
@@ -60,7 +60,7 @@ TYPED_TEST(CopyTest, AllocRandom)
 
 TYPED_TEST(CopyTest, Collect)
 {
-    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
+    auto collector = gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy>{1024};
     auto persist1 = collector.alloc(16);
     const auto data1 = persist1.as_ptr();
     memset(persist1, 1, 16);
@@ -90,7 +90,7 @@ TYPED_TEST(CopyTest, Collect)
 
 TYPED_TEST(CopyTest, LinkedList)
 {
-    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
+    auto collector = gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy>{1024};
     constexpr auto size = sizeof(FatPtr) + sizeof(int);
     static_assert(alignof(int) <= alignof(FatPtr));
     auto node = collector.alloc(size, std::align_val_t{alignof(FatPtr)});
@@ -120,7 +120,7 @@ TYPED_TEST(CopyTest, LinkedList)
 
 TYPED_TEST(CopyTest, AlignedAlloc)
 {
-    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
+    auto collector = gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy>{1024};
     auto ptr = collector.alloc(64, std::align_val_t{64});
     memset(ptr, 1, 64);
     ASSERT_EQ(static_cast<uintptr_t>(ptr) % 64, 0);
@@ -137,7 +137,7 @@ TYPED_TEST(CopyTest, AlignedAlloc)
 }
 
 template <typename T>
-__attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T>& collector)
+__attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T, gcpp::FinalGenerationPolicy>& collector)
 {
     constexpr auto array_size = 13;
     GC_UPDATE_STACK_RANGE();
@@ -153,7 +153,7 @@ __attribute__((noinline)) void alloc_array(gcpp::CopyingCollector<T>& collector)
 
 TYPED_TEST(CopyTest, ArrayCollect)
 {
-    auto collector = gcpp::CopyingCollector<TypeParam>{1024};
+    auto collector = gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy>{1024};
     GC_UPDATE_STACK_RANGE();
     auto int_array1 =
         collector.alloc(sizeof(int) * 100, std::align_val_t{alignof(int)});
@@ -170,7 +170,7 @@ TYPED_TEST(CopyTest, ArrayCollect)
     }
 }
 template <typename T>
-void alloc(gcpp::CopyingCollector<T>& collector, size_t size)
+void alloc(gcpp::CopyingCollector<T, gcpp::FinalGenerationPolicy>& collector, size_t size)
 {
     auto ptr = collector.alloc(size);
     auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
@@ -179,7 +179,7 @@ void alloc(gcpp::CopyingCollector<T>& collector, size_t size)
 
 TYPED_TEST(CopyTest, AutoCollect)
 {
-    gcpp::CopyingCollector<TypeParam> collector(1024);
+    gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy> collector(1024);
     auto ptr = collector.alloc(100);
     auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
     for (size_t i = 0; i < 100; ++i) {
@@ -196,7 +196,7 @@ TYPED_TEST(CopyTest, AutoCollect)
 
 TYPED_TEST(CopyTest, RepeatedRealloc)
 {
-    gcpp::CopyingCollector<TypeParam> collector(1024);
+    gcpp::CopyingCollector<TypeParam, gcpp::FinalGenerationPolicy> collector(1024);
     auto ptr = collector.alloc(100);
     auto array = reinterpret_cast<uint8_t*>(ptr.as_ptr());
     for (size_t i = 0; i < 100; ++i) {
